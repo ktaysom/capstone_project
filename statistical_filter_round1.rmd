@@ -1,0 +1,795 @@
+---
+title: "capstone_category_filter"
+author: "Kyle Taysom"
+date: "11/23/2020"
+output: html_document
+---
+
+```{r}
+require(readr)
+require(ggplot2)
+require(reshape2)
+require(dplyr)
+require(clValid)
+require(RankAggreg)
+require(randomForest)
+set.seed(1)
+```
+```{r}
+eval_cols = c("RDM","DM","Moisture",
+                 "CP","ADICP","NDICP","NDICPss","SP%CP",
+                 "Crude Fiber","Lignin","ADF","aNDF","Hemicellulose","aNDFom",
+                 "Ash","Ca","P","Mg","K","Na","Cl","Mn","Zn","Cu","Al","S","B","Fe",
+                 "pH","Lactic","Acetic","Butyric","Propionic","Ammonia",
+                 "uNDFom12","uNDFom24","uNDFom30","uNDFom48","uNDFom72","uNDFom120","uNDFom240",
+                "Sugar(WSC)","Starch","IVSD7-o",
+                 "Fat","TFA","16:0 Palmitic","18:0 Stearic","18:1 Oleic","18:2 Linoleic","18:3 Linolenic","Ross-16hRUP", "Ross-UCP")
+
+eval_cols = gsub(")","",eval_cols)
+eval_cols = make.names(eval_cols)
+eval_cols
+```
+```{r}
+#Get the source data post ETL
+dir = "C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/feed_data"
+#get a list of files
+file_list = list.files(dir)
+
+m = read_csv(paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/feed_data/",file_list[1], sep = ""), col_types = cols("Sample #" = col_integer(), "Report Date" = col_date(), "Description" = col_character(), "Forage Code" = col_character(), "Subforage Code" = col_character(), "Wet Weight" = col_double(), "Dry Weight" = col_double(), "RDM" = col_double(), "DM" = col_double(), "Moisture" = col_double(), "CP" = col_double(), "ADICP" = col_double(), "NDICP" = col_double(), "NDICPss" = col_double(), "SP%CP" = col_double(), "Ross-16hRUP" = col_double(), "Ross-UCP" = col_double(), "Lignin" = col_double(),"ADF" = col_double(),"aNDF" = col_double(),"aNDFom" = col_double(),"Crude Fiber" = col_double(),"uNDFom12" = col_double(),"uNDFom24" = col_double(),"uNDFom30" = col_double(),"uNDFom48" = col_double(), "uNDFom72" = col_double(),"uNDFom120" = col_double(),"uNDFom240" = col_double(), "Ash" = col_double(),"Ca" = col_double(),"P" = col_double(),"Mg" = col_double(),"K" = col_double(),"Mn" = col_double(),"Zn" = col_double(),"Cu" = col_double(), "Al" = col_double(), "S" = col_double(),"B" = col_double(),"Fe" = col_double(),"Na" = col_double(),"Cl" = col_double(),"Fat" = col_double(),"TFA" = col_double(),"16:0 Palmitic" = col_double(),"18:0 Stearic" = col_double(),"18:1 Oleic" = col_double(),"18:2 Linoleic" = col_double(), "18:3 Linolenic" = col_double(), "Starch" = col_double(), "IVSD7-o" = col_double(), "Sugar(ESC)" = col_double(), "Sugar(WSC)" = col_double(), "pH" = col_double(), "Lactic" = col_double(), "Acetic" = col_double(), "Propionic" = col_double(), "Ammonia" = col_double(), "Butyric" = col_double(), "product" = col_character(), "Fresh" = col_character(),"species" = col_character()))
+
+#For each file in the list
+for(f in file_list){
+  
+  temp_records = read_csv(paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/feed_data/",f, sep = ""), col_types = cols("Sample #" = col_integer(), "Report Date" = col_date(), "Description" = col_character(), "Forage Code" = col_character(), "Subforage Code" = col_character(), "Wet Weight" = col_double(), "Dry Weight" = col_double(), "RDM" = col_double(), "DM" = col_double(), "Moisture" = col_double(), "CP" = col_double(), "ADICP" = col_double(), "NDICP" = col_double(), "NDICPss" = col_double(), "SP%CP" = col_double(), "Ross-16hRUP" = col_double(), "Ross-UCP" = col_double(), "Lignin" = col_double(),"ADF" = col_double(),"aNDF" = col_double(),"aNDFom" = col_double(),"Crude Fiber" = col_double(),"uNDFom12" = col_double(),"uNDFom24" = col_double(),"uNDFom30" = col_double(),"uNDFom48" = col_double(), "uNDFom72" = col_double(),"uNDFom120" = col_double(),"uNDFom240" = col_double(), "Ash" = col_double(),"Ca" = col_double(),"P" = col_double(),"Mg" = col_double(),"K" = col_double(),"Mn" = col_double(),"Zn" = col_double(),"Cu" = col_double(), "Al" = col_double(), "S" = col_double(),"B" = col_double(),"Fe" = col_double(),"Na" = col_double(),"Cl" = col_double(),"Fat" = col_double(),"TFA" = col_double(),"16:0 Palmitic" = col_double(),"18:0 Stearic" = col_double(),"18:1 Oleic" = col_double(),"18:2 Linoleic" = col_double(), "18:3 Linolenic" = col_double(), "Starch" = col_double(), "IVSD7-o" = col_double(), "Sugar(ESC)" = col_double(), "Sugar(WSC)" = col_double(), "pH" = col_double(), "Lactic" = col_double(), "Acetic" = col_double(), "Propionic" = col_double(), "Ammonia" = col_double(), "Butyric" = col_double(), "product" = col_character(), "Fresh" = col_character(),"species" = col_character()))
+
+  if(!f == file_list[1]){
+    m = rbind(m,temp_records)
+    if(which(file_list == f) %% 10 == 0){
+    print(paste("Added file", which(file_list == f), " of ", length(file_list), sep = ""))
+    }
+  }
+
+}
+
+dim(m)
+min(m$`Report Date`)
+max(m$`Report Date`)
+
+#make colnames R compatible
+colnames(m) = gsub(")","",colnames(m))
+colnames(m) = make.names(colnames(m))
+colnames(m)[1:2] = c("Sample_ID","Report.Date")
+
+#drop samples without a pre-defined product type
+m = m[!is.na(m$product),]
+
+#Add hemicellulose calculated as NDF-ADF
+m$Hemicellulose = m$aNDF - m$ADF
+
+feed_types = unique(m$product)
+feed_types
+```
+
+
+Gross outlier detection
+```{r}
+#Make list of feed type categories
+feed_type_list = unique(m$product)
+
+#Creating columns to hold outlier status's
+gross_outlier_df = setNames(data.frame(matrix(ncol = length(eval_cols), nrow = length(m$`Sample_ID`))), paste(eval_cols,"_GO",sep = ""))
+m = cbind(m,gross_outlier_df)
+m$number_of_outlier_nutrients = NA
+m$is_a_nutrient_outlier =  NA
+
+temp_records = data.frame()
+#Find and mark gross outliers as >+/- 3.5 SD's from the mean
+for(ft in feed_type_list){
+  print(paste("Finding gross outliers in",ft))
+  temp_records = m[m$product == ft,]
+  temp_means = apply(temp_records[eval_cols], MARGIN = 2, FUN = function(x) mean(x, na.rm=T)) #Find mean values of feed type
+  temp_sd = apply(temp_records[eval_cols], MARGIN = 2, FUN = function(x) sd(x, na.rm=T)) #Find SD's of each nutrient within feed type
+
+  #Marking outliers more than 3.5 SD's from the mean
+  temp_records[,colnames(gross_outlier_df)] = data.frame(t(apply(temp_records[eval_cols], MARGIN = 1, FUN = function(x) 3.5<=abs(x-temp_means)/temp_sd)))
+  temp_records$number_of_outlier_nutrients = apply(temp_records[,colnames(gross_outlier_df)], MARGIN = 1, FUN = function(x) sum(x, na.rm=T))
+  temp_records$is_a_nutrient_outlier = temp_records$number_of_outlier_nutrients > 0
+
+  #updating the master file in memory to include outlier records
+  m = m[!m$product == ft,]
+  m = rbind(m,temp_records)
+}
+```
+```{r}
+#Calculate a gross outlier summary
+gross_outlier_summary = data.frame(table(m$is_a_nutrient_outlier,m$product))
+gross_outlier_summary = dcast(Var2~Var1, data = gross_outlier_summary)
+colnames(gross_outlier_summary) = c("product","Not_outliers","Outlier_count")
+gross_outlier_summary$pct_outliers = gross_outlier_summary$Outlier_count/(gross_outlier_summary$Outlier_count+gross_outlier_summary$Not_outliers)
+gross_outlier_summary
+
+#Write the gross outlier summary to a file for use in report writing
+write.csv(gross_outlier_summary, "C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/gross_outlier_summary.csv", na = "", row.names = F)
+
+remove(gross_outlier_summary)
+```
+
+```{r}
+#Creat a unique ID for each sample for later matching
+m$unique_id = seq(from = 1, to = length(m$Sample_ID), by = 1)
+
+#Create a list that defines the PCA and/or predictor nutrients for each feed type
+m_PCA_df = m[,c("unique_id","product",eval_cols)]
+
+measurement_summary = m_PCA_df %>% group_by(product) %>% summarise_all(funs(sum(!is.na(.))))
+measurement_summary = melt(measurement_summary, id.vars = "product")
+measurement_summary$variable = as.character(measurement_summary$variable) #Changing the character to prevent downstream problems
+```
+
+```{r}
+#Create a list of nutrients that might be used for PCA. Dropping DM because it is 100% redundant with Moisture
+pca_optional_cols = c("Moisture","CP","ADICP","NDICP","NDICPss","SP.CP","Crude.Fiber","Lignin","ADF","aNDF","Hemicellulose","aNDFom","Ash","Ca","P","Mg","K","Na","Cl","Mn","Zn","Cu","Al","S","B","Fe","pH","Lactic","Acetic","Butyric","Propionic","Ammonia","uNDFom12","uNDFom24","uNDFom30","uNDFom48","uNDFom72","uNDFom120","uNDFom240","Sugar.WSC","Starch","IVSD7.o","Fat","TFA","X16.0.Palmitic","X18.0.Stearic","X18.1.Oleic","X18.2.Linoleic","X18.3.Linolenic","Ross.16hRUP","Ross.UCP")
+
+feed_type_measurement_counts = list()
+
+#Loop through feed types, figuring out how many samples are complete cases for each set of nutrients 
+for(f in feed_type_list){
+  print(paste("Starting",f, sep = " "))
+  feed_type_measurement_counts[f] = f
+  temp_records = m_PCA_df[m_PCA_df$product == f,pca_optional_cols]
+  temp_measurement_summary = measurement_summary[measurement_summary$product == f & measurement_summary$variable %in% pca_optional_cols,] #pull feed type from mesurement summary
+  temp_measurement_summary = temp_measurement_summary[order(temp_measurement_summary$value, decreasing = T),] #order measurement summary by most common nutrient
+  nutrient_vec = temp_measurement_summary$variable
+  
+  temp_answer_df = data.frame("Nutrient_list" = as.character(temp_measurement_summary$variable[1]),
+                              "Count" = temp_measurement_summary$value[1],
+                              "Percent" = 1) #initiates the data frame with the first variable and count of non-na samples
+  
+    all_inclusive_sample_count = 1
+    n = 2
+    while(all_inclusive_sample_count > 0){
+      test_set = temp_records[,c(nutrient_vec[1:n])]
+      test_set$counts = apply(test_set, MARGIN = 1, FUN = function(x) length(x[!is.na(x)]))
+      all_inclusive_sample_count = length(test_set$counts[test_set$counts == n])
+      
+      temp_answer_df = rbind(temp_answer_df, data.frame("Nutrient_list" = paste(nutrient_vec[1:n], collapse = ","), "Count" = all_inclusive_sample_count, "Percent" = all_inclusive_sample_count/temp_measurement_summary$value[1]))
+      n = n+1
+      }
+  feed_type_measurement_counts[[f]] = temp_answer_df
+}
+```
+
+
+```{r}
+PCA_feed_nutrients = data.frame("Feed_type" = "None","nutrients" = "None")
+PCA_disqualified_feeds = c()
+#For each feed type, find the maximum number of nutrients that can be used to keep at least the minimum of 30% of the samples or 50,000, with a minimum of 3 nutrients and 30 samples in each feed type retained
+for(f in feed_type_list){ #For each feed type
+  print(paste("Testing",f))
+  temp_df = feed_type_measurement_counts[[f]] #Pull the data frame of nutrient set counts
+  best_set = max(which(temp_df$Percent>0.3 & temp_df$Count>30),0) #Find the best set that meets minimum criteria
+  if(best_set>3){ #Only execute if there are at least 3 nutrients available in the best nutrient set
+    best_nutrients = as.character(temp_df$Nutrient_list[best_set])
+    PCA_feed_nutrients = rbind(PCA_feed_nutrients,data.frame("Feed_type" = f,"nutrients" = best_nutrients))
+  }else{
+    PCA_disqualified_feeds = c(PCA_disqualified_feeds,f)
+  }
+}
+
+#PCA_feed_nutrients contains list of test nutrients by feed type
+write.csv(PCA_feed_nutrients, "C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/PCA_feed_nutrients_chosen.csv", na = "", row.names = F)
+
+#Which feeds were disqualified for not having enough samples with enough nutrients?
+PCA_disqualified_feeds
+```
+
+
+```{r}
+m$is_a_complete_PCA_case = F #Creating a column to track which samples were kept as complete PCA cases
+m$is_PCA_outlier = NA #Stores status of PCA outlier detection
+m$number_of_outlier_PCs = NA #Stores the number of PCA outliers
+
+#Now in a loop through feed types, marking PCA outliers
+for(f in feed_type_list[feed_type_list %in% as.character(PCA_feed_nutrients$Feed_type)]){ #Only evaluating feeds that had enough nutrients selected for PCA analysis
+  print(paste("Calculating PCA outliers for",f, sep = " "))
+
+  #Isolate and calculate principle components using center and scale options
+  chosen_nutrients = unlist(strsplit(as.character(PCA_feed_nutrients$nutrients[PCA_feed_nutrients$Feed_type == f]), split = ","))
+  temp_df = m[m$product == f & !m$is_a_nutrient_outlier, c("unique_id",chosen_nutrients)]#Selecting samples for feed type that were not marked as gross outliers, with a unique id and columns that were selected for PCA in this previous step
+  temp_df = temp_df[complete.cases(temp_df),] #only using samples with data for all chosen nutrients
+  m$is_a_complete_PCA_case[m$unique_id %in% temp_df$unique_id] = T
+  
+  x = temp_df[,chosen_nutrients]
+  pc.info = prcomp(x, center = T, scale = T) #scale and center each nutrient
+  #Calculate the scores for each sample
+  scores_matrix = pc.info$x #The scores matrix
+  
+  mean_scores = apply(scores_matrix, MARGIN =2, FUN = function(x) mean(x, na.rm=T)) #sets the mean score per PC
+  sd_scores = apply(scores_matrix, MARGIN = 2, FUN = function(x) sd(x, na.rm=T)) #sets the SD of scores per PC
+  scores_df = data.frame(scores_matrix)
+  
+  temp_df$is_PCA_outlier = F 
+  
+  #Create a data frame to hold outlier status
+  PCA_outlier_df = setNames(data.frame(matrix(nrow = dim(scores_matrix)[1], ncol = dim(scores_matrix)[2])),paste("PC",seq(from = 1, to = dim(scores_matrix)[2]), sep = "_"))
+  PCA_outlier_df = data.frame(t(apply(scores_matrix, MARGIN = 1, FUN = function(x) 3.5<=abs(x-mean_scores)/sd_scores)))
+  
+  temp_df$number_of_outlier_PCs = apply(PCA_outlier_df, MARGIN = 1, FUN = function(x) sum(x, na.rm=T))
+  temp_df$is_PCA_outlier = temp_df$number_of_outlier_PCs>0
+
+  #report outlier outcomes to master file
+  m$is_PCA_outlier[m$unique_id %in% temp_df$unique_id[temp_df$is_PCA_outlier == T]] = T
+  m$is_PCA_outlier[m$unique_id %in% temp_df$unique_id[temp_df$is_PCA_outlier == F]] = F
+  m$number_of_outlier_PCs[m$unique_id %in% temp_df$unique_id] = temp_df$number_of_outlier_PCs
+}
+
+```
+
+```{r}
+#Calculate report on number of PCA outliers by feed type
+PCA_outlier_summary = data.frame(table(m$is_PCA_outlier,m$product))
+PCA_outlier_summary = dcast(Var2~Var1, data = PCA_outlier_summary)
+colnames(PCA_outlier_summary) = c("product","not_PCA_outlier","is_PCA_outlier")
+PCA_outlier_summary$percent_PCA_outliers = PCA_outlier_summary$is_PCA_outlier/(PCA_outlier_summary$not_PCA_outlier+PCA_outlier_summary$is_PCA_outlier)
+PCA_outlier_summary
+
+write.csv(PCA_outlier_summary,"C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/PCA_outlier_summary.csv", na = "", row.names = F)
+```
+
+```{r}
+#write m to csv for storage and possibly to reduce memory load?
+write.csv(x = m,"C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/m_after_outlier_detection.csv", na = "", row.names = F)
+
+```
+
+```{r}
+qualified_feeds = feed_type_list[feed_type_list %in% as.character(PCA_feed_nutrients$Feed_type)]
+#Alternatively, split m in to separate files by feed type, write them, and then loop through reading them for cluster analysis
+for(f in feed_type_list[feed_type_list %in% as.character(PCA_feed_nutrients$Feed_type)]){
+  write.csv(m[m$product == f & !is.na(m$product),], paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_outlier_data/",f,".csv", sep = ""), na = "", row.names = F)
+}
+
+```
+
+```{r}
+#dropping un-needed variables to save memory space
+remove(list = c("m_PCA_df", "first_feed","gplot","gross_outlier_df","temp_df","pc.info","scores_df","scores_matrix","PCA_outlier_df","outlier_matrix","measurement_summary","file_list","temp_records","temp_measurement_summary","test_df","temp_means","temp_sd","nutrient_vec","pca_optional_cols","temp_answer_df","test_set","max_allowed_scores","min_allowed_scores","chosen_nutrients","mean_scores","sd_scores","sets_1000","best_nutrients","ft","sets_50","all_inclusive_sample_count","best_set","n","first_feed"))
+
+gc()
+```
+Starting cluster analysis step
+```{r}
+#AUTOMATED VERSION OF CLUSTERING DECISIONS. This was done manually first, and then the decisions were coded so it could be re-run automatically
+file_list = list.files("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_outlier_data")
+
+for(this_file in 1:length(file_list)){
+
+  m_temp = read_csv(paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_outlier_data/",file_list[this_file], sep = ""), col_types = cols("Sample_ID" = col_integer(), "Report.Date" = col_date(), "Description" = col_character(), "Forage.Code" = col_character(), "Subforage.Code" = col_character(), "Wet.Weight" = col_double(), "Dry.Weight" = col_double(), "RDM" = col_double(), "DM" = col_double(), "Moisture" = col_double(), "CP" = col_double(), "ADICP" = col_double(), "NDICP" = col_double(), "NDICPss" = col_double(), "SP.CP" = col_double(), "Ross.16hRUP" = col_double(), "Ross.UCP" = col_double(), "Lignin" = col_double(),"ADF" = col_double(),"aNDF" = col_double(),"aNDFom" = col_double(),"Crude.Fiber" = col_double(),"uNDFom12" = col_double(),"uNDFom24" = col_double(),"uNDFom30" = col_double(),"uNDFom48" = col_double(), "uNDFom72" = col_double(),"uNDFom120" = col_double(),"uNDFom240" = col_double(), "Ash" = col_double(),"Ca" = col_double(),"P" = col_double(),"Mg" = col_double(),"K" = col_double(),"Mn" = col_double(),"Zn" = col_double(),"Cu" = col_double(), "Al" = col_double(), "S" = col_double(),"B" = col_double(),"Fe" = col_double(),"Na" = col_double(),"Cl" = col_double(),"Fat" = col_double(),"TFA" = col_double(),"X16.0.Palmitic" = col_double(),"X18.0.Stearic" = col_double(),"X18.1.Oleic" = col_double(),"X18.2.Linoleic" = col_double(), "X18.3.Linolenic" = col_double(), "Starch" = col_double(), "IVSD7.o" = col_double(), "Sugar.ESC" = col_double(), "Sugar.WSC" = col_double(), "pH" = col_double(), "Lactic" = col_double(), "Acetic" = col_double(), "Propionic" = col_double(), "Ammonia" = col_double(), "Butyric" = col_double(), "product" = col_character(), "Fresh" = col_character(),"species" = col_character()))
+  
+  f = m_temp$product[1]
+  
+  print(paste("Clustering", f, this_file, "of", length(file_list),"feed types", sep = " "))
+  
+  #Use same list of nutrients chosen for PCA analysis
+  chosen_nutrients = unlist(strsplit(as.character(PCA_feed_nutrients$nutrients[PCA_feed_nutrients$Feed_type == f]), split = ","))
+  
+  #Filter to feed type of interest, not nutrient outlier, not PCA outlier, with unique id and chosen nutrient set
+  temp_df = m_temp[m_temp$product == f & !m_temp$is_a_nutrient_outlier & !m_temp$is_PCA_outlier & m_temp$is_a_complete_PCA_case, c("unique_id", chosen_nutrients)]
+
+  sample_size = 1000
+ 
+   #using clValid
+  #if a nutrient has all 0 values, scale will fail, so add a tiny amount of variation to them
+  test_df = temp_df[sample(1:dim(temp_df)[1], min(sample_size,dim(temp_df)[1]), replace = F),]
+
+  zero_nutrients = apply(test_df[,chosen_nutrients], MARGIN = 2, FUN = function(x) is.na(sum(x)))
+  test_df[,chosen_nutrients[zero_nutrients]] = runif(n = dim(test_df)[1], min = 0,max = 0.01)
+  
+  x = as.matrix(test_df[,chosen_nutrients])
+  rownames(x) = test_df$unique_id
+
+  #scale the variables prior the clValid (not sure if this is done within clValid or not)
+  x = scale(x, center = T, scale = T)
+
+  valid_trees = clValid(x, 2:6, clMethods = c("hierarchical","diana"), validation = c("internal","stability"), maxitems = sample_size, method = "complete")
+
+  #Using rank aggregation to select the best model
+  ranks = getRanksWeights(valid_trees)
+  ranks$ranks[,1:5] #looking at the top 5 ranked model
+
+  #Check if one algorithm ranks 1 for the majority of indexes
+  rank_df = data.frame(table(ranks$ranks[,1]))
+  rank_df = rank_df[order(rank_df$Freq, decreasing = T),]
+
+  #Find the most common number of clusters ranked#1 for each parameter
+  top_rank_df = data.frame(ranks$ranks[,1])
+  colnames(top_rank_df) = "Model"
+  top_rank_df$Model = as.character(top_rank_df$Model)
+  top_rank_df$method = sapply(top_rank_df$Model, FUN = function(x) unlist(strsplit(x, split = "-"))[1])
+  top_rank_df$nclust = sapply(top_rank_df$Model, FUN = function(x) unlist(strsplit(x, split = "-"))[2])
+
+  method_table = data.frame(table(top_rank_df$method))
+  best_method = as.character(method_table$Var1[order(method_table$Freq, decreasing = T)][1])
+  nclust_table = data.frame(table(top_rank_df$nclust))
+  best_nclust = as.numeric(as.character((nclust_table$Var1[order(nclust_table$Freq, decreasing = T)][1])))
+
+  #Create clusters using the best method and number of clusters and look for differences among groups
+  if(best_method == "diana"){
+    best_tree = diana(x, diss = F, metric = "euclidean", stand = F, keep.data = F, keep.diss = F, stop.at.k = best_nclust)
+    tree_plot = plot(best_tree, main = paste(best_method, "suggested cut at", best_nclust,"for",f, sep = " "))
+    jpeg(filename = paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/Plots/",f,"_",best_method,"_",best_nclust,"_Treeplot.jpeg", sep = ""))
+    plot(best_tree, main = paste(best_method, "suggested cut at", best_nclust,"for",f, sep = " "), sub = paste(f))
+    while(!is.null(dev.list())) dev.off()
+    best_tree = cutree(best_tree, k = best_nclust)
+  }
+
+  if(best_method == "hierarchical"){
+    dist.x = dist(x, method = "euclidean")
+    best_tree = hclust(dist.x, method = "complete")
+    tree_plot = plot(best_tree, main = paste(best_method, "suggested cut at", best_nclust,"for",f, sep = " "), sub = paste(f))
+    jpeg(filename = paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/plots/",f,"_",best_method,"_",best_nclust,"_Treeplot.jpeg", sep = ""))
+    plot(best_tree, main = paste(best_method, "suggested cut at", best_nclust,"for",f, sep = " "), sub = paste(f))
+    while(!is.null(dev.list())) dev.off()
+    best_tree = cutree(best_tree, k = best_nclust)
+  }
+
+  test_df$cluster_id = factor(best_tree)
+  
+  this_fill_scale = scale_fill_discrete()
+  n_clusters = length(unique(test_df$cluster_id))
+  if(n_clusters == 2){
+    this_fill_scale = scale_fill_manual(values = c("blue","red"))
+  }
+
+  for(n in chosen_nutrients){
+    plot_df = test_df[,c(n,"cluster_id")]
+    this_plot = ggplot(plot_df, aes(x = plot_df[[n]], fill = cluster_id))+
+      geom_density(alpha = 0.5)+
+      theme_minimal(base_size = 16)+
+      labs(title = paste(gsub("_"," ",f),gsub("X","",n)), subtitle = paste(best_method, best_nclust,"clusters"), x = n, fill = "Cluster")+
+      theme(panel.grid = element_blank())+
+      this_fill_scale
+    ggsave(gsub(paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/plots/",f,"_",gsub("X","",n),"_",best_method,"_",best_nclust,".jpeg", sep = ""),replacement = "_",pattern = "%"),plot = this_plot,device = "jpeg")
+    print(this_plot)
+  }
+  
+  if(f %in% c("Alfalfa_hay","Alfalfa_HLG","Bakery_waste","Cannery_waste","Cob_corn","Corn_ear.snaplage","Corn_grain","Corn_s_sweet","Corn_screenings","Cottonseed_whole","Corn_silage","Distillers_syrup","Grain_mix","Grass_hay","Grass_HLG","Malt_sprouts","Mineral_mix","Mixed_HLG","Mixed_hay","Mixed_screenings","Potatoes","Small_grain","SGS","Sorghum_Sudan","Soybeans","Soybeans_roaste","Steam_flaked","TMR","Wheat_midds","Whey")){ #These feeds only indicate one useful cluster
+  #Use this section if only one cluster is desired
+  temp_df$cluster_name = f
+  write.csv(temp_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+  }
+  
+  if(f == "Corn_distillers"){#Dividing wet/dry distillers at 30% Moisture
+    temp_df$cluster_name = "Corn_distillers_dry"
+    temp_df$cluster_name[temp_df$Moisture>30] = "Corn_distillers_wet"
+    write.csv(temp_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+  }
+  if(f == "Beet_pulp"){#Dividing wet/dry beet pulp at 50% moisture
+    temp_df$cluster_name = "Beet_pulp_dry"
+    temp_df$cluster_name[temp_df$Moisture>50] = "Beet_pulp_wet"
+    write.csv(temp_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+  }
+  if(f == "Brewers_grain"){#Dropping cluster 2 from brewers grain because it represents less than 2% of samples
+    test_df$cluster_name = "Brewers_grain"
+    test_df = test_df[!test_df$cluster_id == 2,]
+    test_df = test_df[,colnames(test_df)[!colnames(test_df) == "cluster_id"]]
+    write.csv(test_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+  }
+  if(f == "Canola_meal"){#Using clusters and a random forest model to divide canola meal into solvent and extruded types
+    #Name the clusters
+    test_df$cluster_name = "Canola_meal_solvent"
+    test_df$cluster_name[test_df$cluster_id == 2] = "Canola_meal_extruded"
+    test_df$cluster_name = factor(test_df$cluster_name)
+    
+    #Create model formula
+    formula_nutrients = colnames(test_df)[!colnames(test_df) %in% c("cluster_name","unique_id","cluster_id")]
+    this_formula = as.formula(paste("cluster_name", paste(formula_nutrients, collapse = "+"), sep  = "~"))
+    
+    #Create random forest model to predict cluster memb
+    cluster_predictor = randomForest(this_formula, data = test_df, mtry = floor(sqrt(length(chosen_nutrients)))) #restricts parameters selection to a subset of the variables. Size of subset is set to the square root of the number of variables available
+    
+    #Predict the cluster membership
+    temp_df$cluster_name = predict(cluster_predictor, newdata = temp_df)
+    
+    #Look at the distributions for each nutrient in each predicted cluster, do they make sense?
+    for(n in chosen_nutrients){
+      plot_df = temp_df[,c(n,"cluster_name")]
+      this_plot = ggplot(plot_df, aes(x = plot_df[[n]], fill = cluster_name))+
+        geom_density(alpha = 0.5)+
+        theme_minimal(base_size = 16)+
+        labs(title = paste(gsub("_"," ",f),n), subtitle = paste(best_method, best_nclust,"clusters"), x = n, fill = "Cluster")+
+        theme(panel.grid = element_blank())
+      print(this_plot)
+      }
+    #Write new data to a folder for so it can be run through the statistical filtering process again
+    write.csv(temp_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+  }
+  if(f == "CGF"){#Dividing CGF into wet/dry at 25% Moisture
+    temp_df$cluster_name = "CGF_dry"
+    temp_df$cluster_name[temp_df$Moisture>25] = "CGF_wet"
+    write.csv(temp_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+  }
+  if(f == "Hominy"){#Dropping cluster 2 from Hominy because it represents less than 4% of the samples
+    merged_df = merge(x = temp_df, y = test_df[,c("unique_id","cluster_id")], by = "unique_id")
+    merged_df = merged_df[!merged_df$cluster_id == 2, colnames(merged_df)[!colnames(merged_df) == "cluster_id"]]
+    merged_df$cluster_name = "Hominy"
+    write.csv(merged_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+  }
+  if(f == "Soybean_hulls"){#Dropping cluster 2 from Soybean hulls because it represents less than 5% of the samples
+    #Remove small cluster from soybean hulls
+    merged_df = merge(temp_df,test_df)
+    merged_df = merged_df[!merged_df$cluster_id == 2,]
+    merged_df$cluster_name = f
+    write.csv(merged_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+  }
+  if(f == "SBM"){#Dividing solvent and extruded SBM using cluster id's and a random forest model
+    #Name the clusters
+    test_df$cluster_name = "SBM_solvent"
+    test_df$cluster_name[test_df$cluster_id == 2] = "SBM_extruded"
+    test_df$cluster_name = factor(test_df$cluster_name)
+    
+    #Create model formula
+    formula_nutrients = colnames(test_df)[!colnames(test_df) %in% c("cluster_name","unique_id","cluster_id")]
+    this_formula = as.formula(paste("cluster_name", paste(formula_nutrients, collapse = "+"), sep  = "~"))
+    
+    #Create random forest model to predict cluster memb
+    cluster_predictor = randomForest(this_formula, data = test_df, mtry = floor(sqrt(length(chosen_nutrients)))) #restricts parameters selection to a subset of the variables. Size of subset is set to the square root of the number of variables available
+    
+    #Predict the cluster membership
+    temp_df$cluster_name = predict(cluster_predictor, newdata = temp_df)
+    
+    #Look at the distributions for each nutrient in each predicted cluster, do they make sense?
+    for(n in chosen_nutrients){
+      plot_df = temp_df[,c(n,"cluster_name")]
+      this_plot = ggplot(plot_df, aes(x = plot_df[[n]], fill = cluster_name))+
+        geom_density(alpha = 0.5)+
+        theme_minimal(base_size = 16)+
+        labs(title = paste(gsub("_"," ",f),n), subtitle = paste(best_method, best_nclust,"clusters"), x = n, fill = "Cluster")+
+        theme(panel.grid = element_blank())+
+        scale_fill_manual(values = c("blue","red"))
+      print(this_plot)
+      }
+    #Write new data to a folder for so it can be run through the statistical filtering process again
+    write.csv(temp_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+  }
+  if(f == "Soybeans_roasted"){#Dropping cluster 2 from Roasted soybeans because it represents less than 4% of the samples
+    test_df$cluster_name = "Soybeans_roasted"
+    test_df = test_df[!test_df$cluster_id == 2,]
+    test_df = test_df[,colnames(test_df)[!colnames(test_df) == "cluster_id"]]
+    write.csv(test_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+  }
+  if(f == "Corn_stalks"){#Drop corn stalks >10% starch because they contain grain and therefore aren't stalks
+    temp_df = temp_df[temp_df$Starch<11,]
+    temp_df$cluster_name = f
+    write.csv(temp_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+    }
+}
+
+
+```
+
+Starting cluster analysis step
+
+```{r include=FALSE}
+#THE MANUAL VERSION OF THE CLUSTERING STEP. This was done manually when discovering/identifying sub populations and outlier clusters
+file_list = list.files("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_outlier_data")
+
+m_temp = read_csv(paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_outlier_data/",file_list[32], sep = ""), col_types = cols("Sample_ID" = col_integer(), "Report.Date" = col_date(), "Description" = col_character(), "Forage.Code" = col_character(), "Subforage.Code" = col_character(), "Wet.Weight" = col_double(), "Dry.Weight" = col_double(), "RDM" = col_double(), "DM" = col_double(), "Moisture" = col_double(), "CP" = col_double(), "ADICP" = col_double(), "NDICP" = col_double(), "NDICPss" = col_double(), "SP.CP" = col_double(), "Ross.16hRUP" = col_double(), "Ross.UCP" = col_double(), "Lignin" = col_double(),"ADF" = col_double(),"aNDF" = col_double(),"aNDFom" = col_double(),"Crude.Fiber" = col_double(),"uNDFom12" = col_double(),"uNDFom24" = col_double(),"uNDFom30" = col_double(),"uNDFom48" = col_double(), "uNDFom72" = col_double(),"uNDFom120" = col_double(),"uNDFom240" = col_double(), "Ash" = col_double(),"Ca" = col_double(),"P" = col_double(),"Mg" = col_double(),"K" = col_double(),"Mn" = col_double(),"Zn" = col_double(),"Cu" = col_double(), "Al" = col_double(), "S" = col_double(),"B" = col_double(),"Fe" = col_double(),"Na" = col_double(),"Cl" = col_double(),"Fat" = col_double(),"TFA" = col_double(),"X16.0.Palmitic" = col_double(),"X18.0.Stearic" = col_double(),"X18.1.Oleic" = col_double(),"X18.2.Linoleic" = col_double(), "X18:3.Linolenic" = col_double(), "Starch" = col_double(), "IVSD7.o" = col_double(), "Sugar.ESC" = col_double(), "Sugar.WSC" = col_double(), "pH" = col_double(), "Lactic" = col_double(), "Acetic" = col_double(), "Propionic" = col_double(), "Ammonia" = col_double(), "Butyric" = col_double(), "product" = col_character(), "Fresh" = col_character(),"species" = col_character()))
+
+f = m_temp$product[1]
+
+#Use same list of nutrients chosen for PCA analysis
+chosen_nutrients = unlist(strsplit(as.character(PCA_feed_nutrients$nutrients[PCA_feed_nutrients$Feed_type == f]), split = ","))
+
+#Filter to feed type of interest, not nutrient outlier, not PCA outlier, with unique id and chosen nutrient set
+temp_df = m_temp[m_temp$product == f & !m_temp$is_a_nutrient_outlier & !m_temp$is_PCA_outlier & m_temp$is_a_complete_PCA_case, c("unique_id", chosen_nutrients)]
+
+sample_size = 1000
+#using clValid
+test_df = temp_df[sample(1:dim(temp_df)[1], min(sample_size,dim(temp_df)[1]), replace = F),]
+
+#if a nutrient has all 0 values, scale will fail, so add a tiny amount of variation to them
+zero_nutrients = apply(test_df[,chosen_nutrients], MARGIN = 2, FUN = function(x) is.na(sum(x)))
+test_df[,chosen_nutrients[zero_nutrients]] = runif(n = dim(test_df)[1], min = 0,max = 0.01)
+
+x = as.matrix(test_df[,chosen_nutrients])
+rownames(x) = test_df$unique_id
+
+#scale the variables prior the clValid (not sure if this is done within clValid or not)
+x = scale(x, center = T, scale = T)
+
+valid_trees = clValid(x, 2:6, clMethods = c("hierarchical","diana"), validation = c("internal","stability"), maxitems = sample_size, method = "complete")
+
+#Using rank aggregation to select the best model
+ranks = getRanksWeights(valid_trees)
+ranks$ranks[,1:5] #looking at the top 5 ranked model
+
+#Check if one algorithm ranks 1 for the majority of indexes
+rank_df = data.frame(table(ranks$ranks[,1]))
+rank_df = rank_df[order(rank_df$Freq, decreasing = T),]
+
+#Find the most common number of clusters ranked#1 for each parameter
+top_rank_df = data.frame(ranks$ranks[,1])
+colnames(top_rank_df) = "Model"
+top_rank_df$Model = as.character(top_rank_df$Model)
+top_rank_df$method = sapply(top_rank_df$Model, FUN = function(x) unlist(strsplit(x, split = "-"))[1])
+top_rank_df$nclust = sapply(top_rank_df$Model, FUN = function(x) unlist(strsplit(x, split = "-"))[2])
+
+method_table = data.frame(table(top_rank_df$method))
+best_method = as.character(method_table$Var1[order(method_table$Freq, decreasing = T)][1])
+nclust_table = data.frame(table(top_rank_df$nclust))
+best_nclust = as.numeric(as.character((nclust_table$Var1[order(nclust_table$Freq, decreasing = T)][1])))
+
+#Create clusters using the best method and number of clusters and look for differences among groups
+if(best_method == "diana"){
+  best_tree = diana(x, diss = F, metric = "euclidean", stand = F, keep.data = F, keep.diss = F, stop.at.k = best_nclust)
+  tree_plot = plot(best_tree, main = paste(best_method, "suggested cut at", best_nclust,"for",f, sep = " "))
+  jpeg(filename = paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/Plots/",f,"_",best_method,"_",best_nclust,"_Treeplot.jpeg", sep = ""))
+  plot(best_tree, main = paste(best_method, "suggested cut at", best_nclust,"for",f, sep = " "), sub = paste(f))
+  while(!is.null(dev.list())) dev.off()
+  best_tree = cutree(best_tree, k = best_nclust)
+}
+
+if(best_method == "hierarchical"){
+  dist.x = dist(x, method = "euclidean")
+  best_tree = hclust(dist.x, method = "complete")
+  tree_plot = plot(best_tree, main = paste(best_method, "suggested cut at", best_nclust,"for",f, sep = " "), sub = paste(f))
+  jpeg(filename = paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/plots/",f,"_",best_method,"_",best_nclust,"_Treeplot.jpeg", sep = ""))
+  plot(best_tree, main = paste(best_method, "suggested cut at", best_nclust,"for",f, sep = " "), sub = paste(f))
+  while(!is.null(dev.list())) dev.off()
+  best_tree = cutree(best_tree, k = best_nclust)
+}
+
+test_df$cluster_id = factor(best_tree)
+
+for(n in chosen_nutrients){
+  plot_df = test_df[,c(n,"cluster_id")]
+  this_plot = ggplot(plot_df, aes(x = plot_df[[n]], fill = cluster_id))+
+    geom_density(alpha = 0.5)+
+    theme_minimal(base_size = 16)+
+    labs(title = paste(gsub("_"," ",f),gsub("X","",n)), subtitle = paste(best_method, best_nclust,"clusters"), x = n, fill = "Cluster")+
+    theme(panel.grid = element_blank())+
+    scale_fill_manual(values = c("red","blue"))
+  ggsave(gsub(paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/plots/",f,"_",gsub("X","",n),"_",best_method,"_",best_nclust,".jpeg", sep = ""),replacement = "_",pattern = "%"),plot = this_plot,device = "jpeg")
+  print(this_plot)
+}
+
+
+#Alfalfa_hay looks like it just clusters on maturity
+#Alfalfa_HLG looks like it clusters on moisture/extent of fermentation
+#Bakery waste doesn't have discernable clusters
+#Beet pulp was split into wet/dry
+#Brewers grain has a low-moisture cluster that is less than 2% of the samples, dropping it
+#Cannery waste doesn't have discernable clusters
+#Canola can be seperated into extruded and solvent canola
+#CGF can be split into wet and dry
+#Cob corn clusters on amount of starch, so keeping as one cluster
+#Distillers grains want to split into high/lost P, K, and Mg. Forcing into wet/dry first time through
+#Ear/snaplage doesn't have discernable clusters
+#Corn grain doesn't have discernable clusters
+#Sweet corn silage doesn't have discernable clusters
+#Corn_screenings have no discernable clusters
+#Corn silage has no discernable clusters (attempts to find BMR vs conventional were made
+#Corn stalks have samples >10% starch, which cannot be the case
+#Whole cottonseed has no discernable clusters
+#Grain mixes show no discernable clusters
+#Grass_hay seems to cluster on maturity, so keeping as one population
+#Grass_HLG seems to cluster on maturity, so keeping as one population
+#Hominy shows 2 populations, dropping the population with less than 4% of the samples in it
+#Malt sprouts showed no discernable clusters
+#Mineral mixes showed no discernable clusters
+#Mixed hay is probably clustering mostly-alfalfa and mostly-grass. Use and randomForest later to try to classify these as alfalfa or grass seperately
+#Mixed_HLG seems to be clustering on extent of fermentation, kept as a single class. Maybe try assigning to alfalfa and grass separately.
+#Leave Mixed_screenings as one class
+#Leave Potatoes as one class
+#SGS doesn't have discernable clusters
+#Small grain could split into 2 clusters, but more specific ID's aren't useful for Dairyland at this time because no individual small grain generates enough samples
+#SBM clusters into solvent and extruded
+#Sorghum-Sudan clusters on starch content, but that has no practical application for Dairyland, so leaving as one cluster
+#Soyhulls has a cluster that represents less than 10% of samples, so it is being removed
+#Soybeans_roasted has one cluster that is less than 4% of the samples, so it is being removed
+#Steam flaked corn shows 2 populations, but the root cause is unknown, so leaving as one class
+#TMR had no discernable clusters
+#Wheat midds had no discernable clusters
+
+#Diana seems to split obviously different clusters better. For example, splitting canola meal into solvent/extruded
+```
+
+```{r eval=FALSE, include=FALSE}
+#Use this section if only one cluster is desired
+temp_df$cluster_name = f
+write.csv(temp_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+```
+
+
+```{r eval=FALSE, include=FALSE}
+#Use this section if nameable clusters are found
+
+#Name the clusters
+test_df$cluster_name = "SBM_solvent"
+test_df$cluster_name[test_df$cluster_id == 2] = "SBM_extruded"
+test_df$cluster_name = factor(test_df$cluster_name)
+
+#Create model formula
+formula_nutrients = colnames(test_df)[!colnames(test_df) %in% c("cluster_name","unique_id","cluster_id")]
+this_formula = as.formula(paste("cluster_name", paste(formula_nutrients, collapse = "+"), sep  = "~"))
+
+#Create random forest model to predict cluster memb
+cluster_predictor = randomForest(this_formula, data = test_df, mtry = floor(sqrt(length(chosen_nutrients)))) #restricts parameters selection to a subset of the variables. Size of subset is set to the square root of the number of variables available
+
+#Predict the cluster membership
+temp_df$cluster_name = predict(cluster_predictor, newdata = temp_df)
+
+#Look at the distributions for each nutrient in each predicted cluster, do they make sense?
+  for(n in chosen_nutrients){
+  plot_df = temp_df[,c(n,"cluster_name")]
+  this_plot = ggplot(plot_df, aes(x = plot_df[[n]], fill = cluster_name))+
+    geom_density(alpha = 0.5)+
+    theme_minimal(base_size = 16)+
+    labs(title = paste(gsub("_"," ",f),n), subtitle = paste(best_method, best_nclust,"clusters"), x = n, fill = "Cluster")+
+    theme(panel.grid = element_blank())
+  print(this_plot)
+}
+#Write new data to a folder for so it can be run through the statistical filtering process again
+write.csv(temp_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+
+```
+```{r eval=FALSE, include=FALSE}
+#Use this just for corn stalks
+    temp_df = temp_df[temp_df$Starch<0.10,]
+    write.csv(test_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+```
+
+```{r eval=FALSE, include=FALSE}
+#Using just for canola meal
+test_df$cluster_name = "Canola_meal_solvent"
+test_df$cluster_name[test_df$cluster_id == 2] = "Canola_meal_extruded"
+test_df = test_df[,colnames(test_df)[!colnames(test_df) == "cluster_id"]]
+
+write.csv(test_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+```
+
+
+```{r eval=FALSE, include=FALSE}
+#Using just for brewers grain
+test_df$cluster_name = "Brewers_grain"
+test_df = test_df[!test_df$cluster_id == 2,]
+test_df = test_df[,colnames(test_df)[!colnames(test_df) == "cluster_id"]]
+
+write.csv(test_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+```
+```{r eval=FALSE, include=FALSE}
+#Using just for Soybeans_roasted
+test_df$cluster_name = "Soybeans_roasted"
+test_df = test_df[!test_df$cluster_id == 2,]
+test_df = test_df[,colnames(test_df)[!colnames(test_df) == "cluster_id"]]
+
+write.csv(test_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+```
+
+```{r eval=FALSE, include=FALSE}
+#Using just for wet/dry beet pulp
+temp_df$cluster_name = "Beet_pulp_dry"
+temp_df$cluster_name[temp_df$Moisture>50] = "Beet_pulp_wet"
+
+write.csv(temp_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+
+```
+```{r eval=FALSE, include=FALSE}
+#Using just for wet/dry CGF
+temp_df$cluster_name = "CGF_dry"
+temp_df$cluster_name[temp_df$Moisture>25] = "CGF_wet"
+
+write.csv(temp_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+
+```
+```{r eval=FALSE, include=FALSE}
+#Using just for wet/dry distillers_grain
+temp_df$cluster_name = "Corn_distillers_dry"
+temp_df$cluster_name[temp_df$Moisture>30] = "Corn_distillers_wet"
+
+write.csv(temp_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+
+```
+```{r eval=FALSE, include=FALSE}
+#For hominy only
+merged_df = merge(x = temp_df, y = test_df[,c("unique_id","cluster_id")], by = "unique_id")
+
+merged_df = merged_df[!merged_df$cluster_id == 2, colnames(merged_df)[!colnames(merged_df) == "cluster_id"]]
+
+merged_df$cluster_name = "Hominy"
+write.csv(merged_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+```
+```{r eval=FALSE, include=FALSE}
+#Remove small cluster from soybean hulls
+merged_df = merge(temp_df,test_df)
+
+merged_df = merged_df[merged_df$cluster_id == 2,]
+write.csv(merged_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+```
+
+
+```{r eval=FALSE, include=FALSE}
+#Using just for canola meal
+test_df$cluster_name = "Canola_meal_solvent"
+test_df$cluster_name[test_df$cluster_id == 2] = "Canola_meal_extruded"
+test_df = test_df[,colnames(test_df)[!colnames(test_df) == "cluster_id"]]
+
+write.csv(test_df, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/",f,".csv",sep = ""))
+```
+
+```{r echo=TRUE}
+#Making a special plot to illustrate SBM clustering and the difference between traditional and diana clustering
+
+file_list = list.files("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_outlier_data")
+
+m_temp = read_csv(paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_outlier_data/",file_list[32], sep = ""), col_types = cols("Sample_ID" = col_integer(), "Report.Date" = col_date(), "Description" = col_character(), "Forage.Code" = col_character(), "Subforage.Code" = col_character(), "Wet.Weight" = col_double(), "Dry.Weight" = col_double(), "RDM" = col_double(), "DM" = col_double(), "Moisture" = col_double(), "CP" = col_double(), "ADICP" = col_double(), "NDICP" = col_double(), "NDICPss" = col_double(), "SP.CP" = col_double(), "Ross.16hRUP" = col_double(), "Ross.UCP" = col_double(), "Lignin" = col_double(),"ADF" = col_double(),"aNDF" = col_double(),"aNDFom" = col_double(),"Crude.Fiber" = col_double(),"uNDFom12" = col_double(),"uNDFom24" = col_double(),"uNDFom30" = col_double(),"uNDFom48" = col_double(), "uNDFom72" = col_double(),"uNDFom120" = col_double(),"uNDFom240" = col_double(), "Ash" = col_double(),"Ca" = col_double(),"P" = col_double(),"Mg" = col_double(),"K" = col_double(),"Mn" = col_double(),"Zn" = col_double(),"Cu" = col_double(), "Al" = col_double(), "S" = col_double(),"B" = col_double(),"Fe" = col_double(),"Na" = col_double(),"Cl" = col_double(),"Fat" = col_double(),"TFA" = col_double(),"X16.0.Palmitic" = col_double(),"X18.0.Stearic" = col_double(),"X18.1.Oleic" = col_double(),"X18.2.Linoleic" = col_double(), "X18:3.Linolenic" = col_double(), "Starch" = col_double(), "IVSD7.o" = col_double(), "Sugar.ESC" = col_double(), "Sugar.WSC" = col_double(), "pH" = col_double(), "Lactic" = col_double(), "Acetic" = col_double(), "Propionic" = col_double(), "Ammonia" = col_double(), "Butyric" = col_double(), "product" = col_character(), "Fresh" = col_character(),"species" = col_character()))
+
+f = m_temp$product[1]
+
+#Use same list of nutrients chosen for PCA analysis
+chosen_nutrients = unlist(strsplit(as.character(PCA_feed_nutrients$nutrients[PCA_feed_nutrients$Feed_type == f]), split = ","))
+
+#Filter to feed type of interest, not nutrient outlier, not PCA outlier, with unique id and chosen nutrient set
+temp_df = m_temp[m_temp$product == f & !m_temp$is_a_nutrient_outlier & !m_temp$is_PCA_outlier & m_temp$is_a_complete_PCA_case, c("unique_id", chosen_nutrients)]
+
+sample_size = 1000
+#using clValid
+test_df = temp_df[sample(1:dim(temp_df)[1], min(sample_size,dim(temp_df)[1]), replace = F),]
+
+#if a nutrient has all 0 values, scale will fail, so add a tiny amount of variation to them
+zero_nutrients = apply(test_df[,chosen_nutrients], MARGIN = 2, FUN = function(x) is.na(sum(x)))
+test_df[,chosen_nutrients[zero_nutrients]] = runif(n = dim(test_df)[1], min = 0,max = 0.01)
+
+x = as.matrix(test_df[,chosen_nutrients])
+rownames(x) = test_df$unique_id
+
+#scale the variables prior the clValid (not sure if this is done within clValid or not)
+x = scale(x, center = T, scale = T)
+
+valid_trees = clValid(x, 2:6, clMethods = c("hierarchical","diana"), validation = c("internal","stability"), maxitems = sample_size, method = "complete")
+
+#Using rank aggregation to select the best model
+#ranks = getRanksWeights(valid_trees)
+#ranks$ranks[,1:5] #looking at the top 5 ranked model
+
+#Check if one algorithm ranks 1 for the majority of indexes
+#rank_df = data.frame(table(ranks$ranks[,1]))
+#rank_df = rank_df[order(rank_df$Freq, decreasing = T),]
+
+#Find the most common number of clusters ranked#1 for each parameter
+#top_rank_df = data.frame(ranks$ranks[,1])
+#colnames(top_rank_df) = "Model"
+#top_rank_df$Model = as.character(top_rank_df$Model)
+#top_rank_df$method = sapply(top_rank_df$Model, FUN = function(x) unlist(strsplit(x, split = "-"))[1])
+#top_rank_df$nclust = sapply(top_rank_df$Model, FUN = function(x) unlist(strsplit(x, split = "-"))[2])
+
+#method_table = data.frame(table(top_rank_df$method))
+#best_method = as.character(method_table$Var1[order(method_table$Freq, decreasing = T)][1])
+#nclust_table = data.frame(table(top_rank_df$nclust))
+#best_nclust = as.numeric(as.character((nclust_table$Var1[order(nclust_table$Freq, decreasing = T)][1])))
+
+diana_tree = diana(x, diss = F, metric = "euclidean", stand = F, keep.data = F, keep.diss = F, stop.at.k = 2)
+
+dist.x = dist(x, method = "euclidean")
+hca_tree =  hclust(dist.x, method = "complete")
+
+test_df$Diana = cutree(diana_tree, 2)
+test_df$`Traditional HCA` = cutree(hca_tree,2)
+
+test_df_long = melt(test_df, id.vars = colnames(test_df)[!colnames(test_df) %in% c("Diana","Traditional HCA")])
+
+head(test_df_long)
+```
+
+```{r}
+ggplot(test_df_long, aes(x = Fat))+
+  geom_density(alpha = 0.4, aes(fill = as.factor(value)))+
+  facet_wrap(.~variable, ncol = 1)+
+  theme_minimal(base_size = 16)+
+  theme(panel.grid = element_blank())+
+  labs(fill = "Cluster")+
+  scale_fill_manual(values = c("red","blue"))
+
+ggsave("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/plots/sbm_diana_v_hca.jpeg",device = "jpeg")
+```

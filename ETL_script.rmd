@@ -1,0 +1,333 @@
+---
+title: "Feed_ETL_script"
+author: "Kyle Taysom"
+date: "9/14/2020"
+output: html_document
+---
+
+Tools
+```{r}
+require(RMySQL)
+require(reshape2)
+require(stringr)
+require(readr)
+```
+```{r}
+#A function for defining feed types based on Dairyland's feed type codes and descriptions
+DL_products<-function(master_forage_DF, forage_colname = "Forage_Code", subforage_colname = "Subforage_Code"){
+  master_forage_DF$product<-NA
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "1A"]<-"Alfalfa_hay"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "1B"]<-"Grass_hay"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "1C"]<-"Mixed_HLG"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "1D"]<-"Alfalfa_HLG"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "1E"]<-"Grass_HLG"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "1"]<-"Mixed_hay"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "2"]<-"Corn_silage"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "2" & master_forage_DF[[subforage_colname]] == "LK"]<-"Corn_stalks"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "2" & master_forage_DF[[subforage_colname]] == "SW"]<-"Corn_s_sweet"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "2" & master_forage_DF[[subforage_colname]] == "WA"]<-"Cannery_waste"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "3"]<-"Corn_grain"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "3" & master_forage_DF[[subforage_colname]] == "HY"]<-"Hominy"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "3" & master_forage_DF[[subforage_colname]] == "SF"]<-"Steam_flaked"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "4"]<-"Corn_ear.snaplage"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "4" & master_forage_DF[[subforage_colname]] == "CC"]<-"Cob_corn"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "4" & master_forage_DF[[subforage_colname]] == "SC"]<-"Corn_screenings"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "5"]<-"Small_grain"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "6"]<-"Grain_byproduct"
+  distillers<- c("DG","DD","WD","WS","WC")
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "6" & master_forage_DF[[subforage_colname]] %in% distillers]<-"Corn_distillers"
+  
+  if(exists("master_forage_DF$Crude_Protein")){
+    master_forage_DF$product[master_forage_DF[[forage_colname]] == "6" & master_forage_DF[[subforage_colname]] == "GM" & master_forage_DF$Crude_Protein>0.40]<-"CGM"
+    master_forage_DF$product[master_forage_DF[[forage_colname]] == "6" & master_forage_DF[[subforage_colname]] == "GM" & master_forage_DF$Crude_Protein>0.40]<-"CGF"
+  }
+  else {master_forage_DF$product[master_forage_DF[[forage_colname]] == "6" & master_forage_DF[[subforage_colname]] == "GM"]<-"CGF"}
+
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "6" & master_forage_DF[[subforage_colname]] == "GF" ]<-"CGF"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "6" & master_forage_DF[[subforage_colname]] == "DS" ]<-"Distillers_syrup"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "6" & master_forage_DF[[subforage_colname]] == "CS" ]<-"Corn_stillage"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "6" & master_forage_DF[[subforage_colname]] == "MS" ]<-"Malt_sprouts"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "6" & master_forage_DF[[subforage_colname]] == "WM" ]<-"Wheat_midds"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "6" & (master_forage_DF[[subforage_colname]] == "DB" | master_forage_DF[[subforage_colname]] == "WB")]<-"Brewers_grain"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "6" & master_forage_DF[[subforage_colname]] == "EE" ]<-"Mixed_screenings"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "7"]<-"SGS"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "7" & (master_forage_DF[[subforage_colname]] == "SS" | master_forage_DF[[subforage_colname]] == "BS")]<-"Sorghum_Sudan"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "8" & master_forage_DF[[subforage_colname]] == "SB" ]<-"Soybeans"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "8" & master_forage_DF[[subforage_colname]] == "SR" ]<-"Soybeans_roasted"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "8" & master_forage_DF[[subforage_colname]] == "SL" ]<-"SBM"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "8" & master_forage_DF[[subforage_colname]] == "FL" ]<-"Soybeans_flaked"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "8" & master_forage_DF[[subforage_colname]] == "SM" ]<-"Sunflower_meal"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "8" & master_forage_DF[[subforage_colname]] == "SY" ]<-"Soybean_hulls"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "8" & master_forage_DF[[subforage_colname]] == "CW" ]<-"Cottonseed_whole"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "8" & master_forage_DF[[subforage_colname]] == "CH" ]<-"Cottonseed_hulls"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "8" & master_forage_DF[[subforage_colname]] == "CA" ]<-"Canola_seeds"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "8" & master_forage_DF[[subforage_colname]] == "CM" ]<-"Canola_meal"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "8" & master_forage_DF[[subforage_colname]] == "LM" ]<-"Linseed_meal"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "9" ]<-"TMR"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "10" & master_forage_DF[[subforage_colname]] == "BL" ]<-"Bloodmeal"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "10" & master_forage_DF[[subforage_colname]] == "FA" ]<-"Feather_meal"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "10" & master_forage_DF[[subforage_colname]] == "WY" ]<-"Whey"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "10" & master_forage_DF[[subforage_colname]] == "MB" ]<-"Meat_bone_meal"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "10" & master_forage_DF[[subforage_colname]] == "BP" ]<-"Beet_pulp"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "10" & master_forage_DF[[subforage_colname]] == "BW" ]<-"Bakery_waste"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "10" & master_forage_DF[[subforage_colname]] == "BT" ]<-"Beet_tailings"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "10" & master_forage_DF[[subforage_colname]] == "MM" ]<-"Mineral_mix"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "10" & master_forage_DF[[subforage_colname]] == "MO" ]<-"Molasses"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "10" & master_forage_DF[[subforage_colname]] == "FM" ]<-"Fish_meal"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "10" & master_forage_DF[[subforage_colname]] == "PT" ]<-"Potatoes"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "10" & master_forage_DF[[subforage_colname]] == "CP" ]<-"Citrus_pulp"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "10" & master_forage_DF[[subforage_colname]] == "MA" ]<-"Manure"
+  master_forage_DF$product[master_forage_DF[[forage_colname]] == "10" & master_forage_DF[[subforage_colname]] == "GR" ]<-"Grain_mix"
+
+  #fresh vs ensiled
+  master_forage_DF$Fresh<-NA
+  master_forage_DF$Fresh[master_forage_DF[[forage_colname]] == "1" & grepl("F",master_forage_DF[[subforage_colname]])]<-"Fresh"
+  master_forage_DF$Fresh[master_forage_DF[[forage_colname]] == "1A" & grepl("F",master_forage_DF[[subforage_colname]])]<-"Fresh"
+  master_forage_DF$Fresh[master_forage_DF[[forage_colname]] == "1B" & grepl("F",master_forage_DF[[subforage_colname]])]<-"Fresh"
+  master_forage_DF$Fresh[master_forage_DF[[forage_colname]] == "1C" & grepl("F",master_forage_DF[[subforage_colname]])]<-"Fresh"
+  master_forage_DF$Fresh[master_forage_DF[[forage_colname]] == "1D" & grepl("F",master_forage_DF[[subforage_colname]])]<-"Fresh"
+  master_forage_DF$Fresh[master_forage_DF[[forage_colname]] == "1E" & grepl("F",master_forage_DF[[subforage_colname]])]<-"Fresh"
+  master_forage_DF$Fresh[master_forage_DF[[forage_colname]] == "2" & grepl("F",master_forage_DF[[subforage_colname]])]<-"Fresh"
+  master_forage_DF$Fresh[master_forage_DF[[forage_colname]] == "3" & grepl("F",master_forage_DF[[subforage_colname]])]<-"Fresh"
+  master_forage_DF$Fresh[master_forage_DF[[forage_colname]] == "4" & grepl("F",master_forage_DF[[subforage_colname]])]<-"Fresh"
+  master_forage_DF$Fresh[master_forage_DF[[forage_colname]] == "7" & grepl("F",master_forage_DF[[subforage_colname]])]<-"Fresh"
+
+  #forage species
+  master_forage_DF$species<-NA
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "AH" | master_forage_DF[[subforage_colname]] == "AL"]<-"Alfalfa"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "CL"]<-"Clover"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "TH" | master_forage_DF[[subforage_colname]] == "TI"]<-"Timothy"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "GH" | master_forage_DF[[subforage_colname]] == "RS"]<-"Ryegrass"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "OD" | master_forage_DF[[subforage_colname]] == "OG"]<-"Orchardgrass"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "PH" | master_forage_DF[[subforage_colname]] == "PA"]<-"Pasture"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "SH" | master_forage_DF[[subforage_colname]] == "SS"]<-"Sorghum/Sudan"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "BS"]<-"Sorghum/Sudan_BMR"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "SG"]<-"Sorghum"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "WT" | master_forage_DF[[subforage_colname]] == "WG" | master_forage_DF[[subforage_colname]] == "WH"]<-"Wheat"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "KH" | master_forage_DF[[subforage_colname]] == "KO"]<-"Kochia"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "TR" | master_forage_DF[[subforage_colname]] == "TG" | master_forage_DF[[subforage_colname]] == "TS"]<-"Triticale"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "FE" | master_forage_DF[[subforage_colname]] == "FU"]<-"Fescue"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "BY" | master_forage_DF[[subforage_colname]] == "BG" | master_forage_DF[[subforage_colname]] == "BA"]<-"Barley"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "OH" | master_forage_DF[[subforage_colname]] == "OA" | master_forage_DF[[subforage_colname]] == "OT"]<-"Oat"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "BH" | master_forage_DF[[subforage_colname]] == "BE"]<-"Bermuda"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "ST"]<-"Straw"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "MH" | master_forage_DF[[subforage_colname]] == "ML"]<-"Millet"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "KY" | master_forage_DF[[subforage_colname]] == "KU"]<-"Kikuyu"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "CL"]<-"Clover"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "SP"]<-"Spelt"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "MI"]<-"Milo"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "RY"]<-"Rye"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "PO"]<-"Peas_&_oats"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "SN"]<-"Soybean"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "BP"]<-"Barley_&_peas"
+  master_forage_DF$species[master_forage_DF[[subforage_colname]] == "RY"]<-"Trit_&_peas"
+  return(master_forage_DF)
+  
+}
+
+```
+
+```{r}
+#Definition of column names and data types for mysql table
+feed_table_fields = c("Sample #" = "INT", "Report Date" = "DATE", "Forage Code" = "CHAR(3)","Subforage Code" = "CHAR(3)",
+                      "Description" = "CHAR(30)","Desc 2" = "CHAR(30)","Desc 3" = "CHAR(30)","State" = "CHAR(55)","Zip" = "CHAR(30)","Package" = "CHAR(10)","Drying Type" = "CHAR(10)",
+                      "RDM" = "DOUBLE","DM" = "DOUBLE","Moisture" = "DOUBLE",
+                      "Crude Protein" = "DOUBLE","AD-ICP" = "DOUBLE","ND-ICP" = "DOUBLE","ND-ICPss" = "DOUBLE","SP%CP" = "DOUBLE","Ammonia" = "DOUBLE","Ross-16hRUP" = "DOUBLE","Ross-UCP" = "DOUBLE",
+                      "Crude Fiber" = "DOUBLE","Lignin" = "DOUBLE","ADF" = "DOUBLE","NDF" = "DOUBLE","aNDFom" = "DOUBLE",
+                      "Ash" = "DOUBLE","Calcium" = "DOUBLE","Phosphorus" = "DOUBLE","Magnesium" = "DOUBLE","Potassium" = "DOUBLE","Sodium" = "DOUBLE","Chloride" = "DOUBLE","Sulfur" = "DOUBLE",
+                      "Manganese" = "DOUBLE","Zinc" = "DOUBLE","Copper" = "DOUBLE","Aluminum" = "DOUBLE","Boron" = "DOUBLE","Iron" = "DOUBLE",
+                      "pH" = "DOUBLE","Lactic" = "DOUBLE","Acetic" = "DOUBLE","Butyric" = "DOUBLE","Propionic" = "DOUBLE",
+                      "uNDFom12" = "DOUBLE","uNDFom24" = "DOUBLE","uNDFom30" = "DOUBLE","uNDFom48" = "DOUBLE","uNDFom72" = "DOUBLE","uNDFom120" = "DOUBLE","uNDFom240" = "DOUBLE",
+                      "Sugar (ESC)" = "DOUBLE","Sugar (WSC)" = "DOUBLE","Starch" = "DOUBLE","IVSD7-o" = "DOUBLE",
+                      "Fat" = "DOUBLE","TFA" = "DOUBLE","16:0 Palmitic" = "DOUBLE","18:0 Stearic" = "DOUBLE","18:1 Oleic"= "DOUBLE","18:2 Linoleic" = "DOUBLE","18:3 Linolenic" = "DOUBLE",
+                      "product" = "CHAR(55)","Fresh" = "CHAR(10)","species" = "CHAR(55)")
+```
+
+Set up db connection to source
+```{r}
+external_ip = #Removed for security reasons
+internal_ip = #Removed for security reasons
+external_ip_proxy = #Removed for security reasons
+username = #Removed for security reasons
+pass = #Removed for security reasons
+DLprod_name = #Removed for security reasons
+  
+dlprod = dbConnect(MySQL(), user = username, password = pass, dbname = DLprod_name, host = external_ip)
+```
+
+```{r}
+#query to retrieve 100% dry results from DL prod
+
+update_feed_sql_100 = function(first_day, last_day){
+  statement = paste0(
+"SELECT feed_sample AS 'Sample #',
+    feed_date AS 'Report Date',
+    feed_desc AS 'Description',
+    feed_forage AS 'Forage Code',
+    feed_subforage AS 'Subforage Code',
+    FORMAT(feed_wet,1) AS 'Wet Weight',
+    FORMAT(feed_dry,1) AS 'Dry Weight',
+    max(case when fd_csv_line=225 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'RDM',
+    max(case when fd_csv_line=2 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'DM',
+    max(case when fd_csv_line=1 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Moisture',    
+
+    max(case when fd_csv_line=4 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'CP',    
+    max(case when fd_csv_line=17 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'ADICP',    
+    max(case when fd_csv_line=19 and feed_ndfin<>0 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'NDICP',
+    max(case when fd_csv_line=191 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'NDICPss',     
+    max(case when fd_csv_line=21 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'SP%CP',
+    max(case when fd_csv_line=292 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Ross-16hRUP',     
+    max(case when fd_csv_line=293 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Ross-UCP',
+
+    max(case when fd_csv_line=9 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Lignin',    
+    max(case when fd_csv_line=7 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'ADF',    
+    max(case when fd_csv_line=8 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'aNDF',
+    max(case when fd_csv_line=164 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'aNDFom',
+    max(case when fd_csv_line=22 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Crude Fiber',
+    max(case when fd_csv_line=166 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'uNDFom12',     
+    max(case when fd_csv_line=167 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'uNDFom24',     
+    max(case when fd_csv_line=168 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'uNDFom30',     
+    max(case when fd_csv_line=169 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'uNDFom48',
+    max(case when fd_csv_line=177 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'uNDFom72',     
+    max(case when fd_csv_line=170 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'uNDFom120',     
+    max(case when fd_csv_line=151 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'uNDFom240',     
+    
+    max(case when fd_csv_line=25 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Ash',    
+    max(case when fd_csv_line=26 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Ca',    
+    max(case when fd_csv_line=27 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'P',    
+    max(case when fd_csv_line=28 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Mg',    
+    max(case when fd_csv_line=29 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'K',    
+    max(case when fd_csv_line=35 then nullif(CONCAT(round(fd_value),' ppm'),0) else '' end) AS 'Mn',    
+    max(case when fd_csv_line=36 then nullif(CONCAT(round(fd_value),' ppm'),0) else '' end) AS 'Zn',    
+    max(case when fd_csv_line=37 then nullif(CONCAT(round(fd_value),' ppm'),0) else '' end) AS 'Cu',    
+    max(case when fd_csv_line=39 then nullif(CONCAT(round(fd_value),' ppm'),0) else '' end) AS 'Al',    
+    max(case when fd_csv_line=30 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'S',    
+    max(case when fd_csv_line=34 then nullif(CONCAT(round(fd_value),' ppm'),0) else '' end) AS 'B',    
+    max(case when fd_csv_line=38 then nullif(CONCAT(round(fd_value),' ppm'),0) else '' end) AS 'Fe',    
+    max(case when fd_csv_line=40 then nullif(CONCAT(round(fd_value*10000),' ppm'),0) else '' end) AS 'Na',
+    max(case when fd_csv_line=41 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Cl',    
+    
+    max(case when fd_csv_line=24 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Fat',
+    max(case when fd_csv_line=146 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'TFA',
+    max(case when fd_csv_line=213 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS '16:0 Palmitic',     
+    max(case when fd_csv_line=214 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS '18:0 Stearic',     
+    max(case when fd_csv_line=215 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS '18:1 Oleic',     
+    max(case when fd_csv_line=216 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS '18:2 Linoleic',     
+    max(case when fd_csv_line=217 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS '18:3 Linolenic', 
+    
+    max(case when fd_csv_line=23 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Starch',
+    max(case when fd_csv_line=206 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'IVSD7-o',     
+    max(case when fd_csv_line=31 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Sugar(ESC)', 
+    max(case when fd_csv_line=165 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Sugar(WSC)',     
+    
+    max(case when fd_csv_line=3 then nullif(round(fd_value,2),0) else '' end) AS 'pH',    
+    max(case when fd_csv_line=46 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Lactic',    
+    max(case when fd_csv_line=47 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Acetic',
+    max(case when fd_csv_line=48 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Propionic',     
+    max(case when fd_csv_line=51 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Ammonia',     
+    max(case when fd_csv_line=49 then nullif(CONCAT(round(fd_value,2),'%'),0) else '' end) AS 'Butyric'     
+FROM `dairy_dw`.`dw_feed` feed
+LEFT JOIN `dairy_dw`.`dw_feeddata` fd
+	ON fd.lab_id = feed.lab_id 
+	AND fd.archive = feed.archive 
+    AND fd_sample = feed_sample 
+	AND fd_cust = feed_cust 
+	AND fd_sub_cust = feed_sub_cust 
+	AND fd_date = feed_date
+WHERE feed_date >='",first_date,"'
+	and feed_date <'", last_date,"'
+	and (char_length(feed.archive) > 3 
+		or char_length(feed.archive) < 3)
+GROUP BY feed_lab, feed_sample, feed_date;", sep = "")
+}
+
+numeric_cols = c("Wet Weight", "Dry Weight","RDM","DM","Moisture",
+                 "CP","ADICP","NDICP","NDICPss","SP%CP",
+                 "Crude Fiber","Lignin","ADF","aNDF","aNDFom",
+                 "Ash","Ca","P","Mg","K","Na","Cl","Mn","Zn","Cu","Al","S","B","Fe",
+                 "pH","Lactic","Acetic","Butyric","Propionic","Ammonia",
+                 "uNDFom12","uNDFom24","uNDFom30","uNDFom48","uNDFom72","uNDFom120","uNDFom240",
+                 "Sugar(ESC)","Sugar(WSC)","Starch","IVSD7-o",
+                 "Fat","TFA","16:0 Palmitic","18:0 Stearic","18:1 Oleic","18:2 Linoleic","18:3 Linolenic","Ross-16hRUP", "Ross-UCP")
+
+```
+
+```{r}
+#This section is used to find the last date from samples that were already pulled from DL prod
+dir = "C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/feed_data"
+#get a list of files
+file_list = list.files(dir)
+
+m = read_csv(paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/feed_data/",file_list[1], sep = ""), col_types = cols("Sample #" = col_integer(), "Report Date" = col_date(), "Description" = col_character(), "Forage Code" = col_character(), "Subforage Code" = col_character(), "Wet Weight" = col_double(), "Dry Weight" = col_double(), "RDM" = col_double(), "DM" = col_double(), "Moisture" = col_double(), "CP" = col_double(), "ADICP" = col_double(), "NDICP" = col_double(), "NDICPss" = col_double(), "SP%CP" = col_double(), "Ross-16hRUP" = col_double(), "Ross-UCP" = col_double(), "Lignin" = col_double(),"ADF" = col_double(),"aNDF" = col_double(),"aNDFom" = col_double(),"Crude Fiber" = col_double(),"uNDFom12" = col_double(),"uNDFom24" = col_double(),"uNDFom30" = col_double(),"uNDFom48" = col_double(), "uNDFom72" = col_double(),"uNDFom120" = col_double(),"uNDFom240" = col_double(), "Ash" = col_double(),"Ca" = col_double(),"P" = col_double(),"Mg" = col_double(),"K" = col_double(),"Mn" = col_double(),"Zn" = col_double(),"Cu" = col_double(), "Al" = col_double(), "S" = col_double(),"B" = col_double(),"Fe" = col_double(),"Na" = col_double(),"Cl" = col_double(),"Fat" = col_double(),"TFA" = col_double(),"16:0 Palmitic" = col_double(),"18:0 Stearic" = col_double(),"18:1 Oleic" = col_double(),"18:2 Linoleic" = col_double(), "18:3 Linolenic" = col_double(), "Starch" = col_double(), "IVSD7-o" = col_double(), "Sugar(ESC)" = col_double(), "Sugar(WSC)" = col_double(), "pH" = col_double(), "Lactic" = col_double(), "Acetic" = col_double(), "Propionic" = col_double(), "Ammonia" = col_double(), "Butyric" = col_double(), "product" = col_character(), "Fresh" = col_character(),"species" = col_character()))
+
+#For each file in the list
+for(f in file_list){
+  
+  temp_records = read_csv(paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/feed_data/",f, sep = ""), col_types = cols("Sample #" = col_integer(), "Report Date" = col_date(), "Description" = col_character(), "Forage Code" = col_character(), "Subforage Code" = col_character(), "Wet Weight" = col_double(), "Dry Weight" = col_double(), "RDM" = col_double(), "DM" = col_double(), "Moisture" = col_double(), "CP" = col_double(), "ADICP" = col_double(), "NDICP" = col_double(), "NDICPss" = col_double(), "SP%CP" = col_double(), "Ross-16hRUP" = col_double(), "Ross-UCP" = col_double(), "Lignin" = col_double(),"ADF" = col_double(),"aNDF" = col_double(),"aNDFom" = col_double(),"Crude Fiber" = col_double(),"uNDFom12" = col_double(),"uNDFom24" = col_double(),"uNDFom30" = col_double(),"uNDFom48" = col_double(), "uNDFom72" = col_double(),"uNDFom120" = col_double(),"uNDFom240" = col_double(), "Ash" = col_double(),"Ca" = col_double(),"P" = col_double(),"Mg" = col_double(),"K" = col_double(),"Mn" = col_double(),"Zn" = col_double(),"Cu" = col_double(), "Al" = col_double(), "S" = col_double(),"B" = col_double(),"Fe" = col_double(),"Na" = col_double(),"Cl" = col_double(),"Fat" = col_double(),"TFA" = col_double(),"16:0 Palmitic" = col_double(),"18:0 Stearic" = col_double(),"18:1 Oleic" = col_double(),"18:2 Linoleic" = col_double(), "18:3 Linolenic" = col_double(), "Starch" = col_double(), "IVSD7-o" = col_double(), "Sugar(ESC)" = col_double(), "Sugar(WSC)" = col_double(), "pH" = col_double(), "Lactic" = col_double(), "Acetic" = col_double(), "Propionic" = col_double(), "Ammonia" = col_double(), "Butyric" = col_double(), "product" = col_character(), "Fresh" = col_character(),"species" = col_character()))
+
+  if(!f == file_list[1]){
+    m = rbind(m,temp_records)
+    print(paste("Added file", which(file_list == f), " of ", length(file_list), sep = ""))
+  }
+
+}
+
+dim(m)
+min(m$`Report Date`)
+max(m$`Report Date`)
+
+#drop samples without a pre-defined product type
+m = m[!is.na(m$product),]
+
+last_date = max(m$`Report Date`)
+```
+```{r}
+#Loop for writing new DL prod feed data to csv files by month
+last_date = last_date
+
+#get last date available from dlprod
+last_date_available = as.Date(unlist(dbGetQuery(dlprod, "SELECT MAX(feed_date) FROM dairy_dw.dw_feed")))+0
+
+#first_date = as.Date(last_stored_date)
+first_date = last_date
+last_date = first_date+30
+
+while(last_date < last_date_available){
+  #Extract
+  feed_sql = update_feed_sql_100(first_date, last_date)
+  
+  temp_samples = dbGetQuery(dlprod, feed_sql)
+  print(paste("Finished extracting ", dim(temp_samples)[1]," samples between ", first_date," and ", last_date, sep = ""))
+  
+  #Transform
+    #remove non-numeric characters from numeric fields
+  temp_samples[,numeric_cols] = apply(temp_samples[,numeric_cols], MARGIN = 2, FUN = function(x) str_replace_all(x,"[A-z]",""))
+  temp_samples[,numeric_cols] = apply(temp_samples[,numeric_cols], MARGIN = 2, FUN = function(x) str_replace_all(x," ",""))
+  temp_samples[,numeric_cols] = apply(temp_samples[,numeric_cols], MARGIN = 2, FUN = function(x) str_replace_all(x,"%",""))
+
+  #convert numeric_cols to numeric
+  temp_samples[,numeric_cols] = apply(temp_samples[,numeric_cols], MARGIN = 2, FUN = function(x) as.numeric(x))
+  
+  #fix 72 hr values that are stored incorrectly 
+  temp_samples$uNDFom72[temp_samples$uNDFom72>1 & !is.na(temp_samples$uNDFom72)]<-as.numeric(temp_samples$uNDFom72[temp_samples$uNDFom72>1 &!is.na(temp_samples$uNDFom72)]) / 100
+
+  #Declare a feed type
+  temp_samples = DL_products(temp_samples, forage_colname = "Forage Code",subforage_colname = "Subforage Code")
+  
+  print("Finished transforming")
+
+  #Load
+  write.csv(temp_samples, paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/feed_data/file_",first_date,"_",last_date,".csv"), na = "", row.names = F)
+  
+  print("Finished loading")
+
+  first_date = last_date
+  last_date = first_date+30
+}
+```
+
+
+```{r}
+dbDisconnect(dlprod)
+
+```

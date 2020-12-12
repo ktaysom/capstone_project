@@ -1,0 +1,369 @@
+---
+title: "feed_type_predictor"
+author: "Kyle Taysom"
+date: "11/25/2020"
+output: html_document
+---
+This script creates a randomForest model to predict feed type classification from a set of input nutrients
+```{r}
+require(randomForest)
+require(ggplot2)
+require(reshape2)
+require(readr)
+require(dplyr)
+require(e1071)
+set.seed(1)
+```
+```{r}
+#Read the data in
+clustered_files = list.files("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_2_data/Post_clustering_data")
+
+clustered_files
+```
+```{r include=FALSE}
+#Read in the cleaned/clusterd files
+m_clean = read_csv(paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_2_data/Post_clustering_data/",clustered_files[1],sep = ""))
+
+for(i in clustered_files[2:length(clustered_files)]){
+  this_file = read_csv(paste("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_2_data/Post_clustering_data/",i, sep = ""))
+  
+  m_clean = merge(m_clean, this_file, all = T)
+}
+
+feed_type_list = unique(m_clean$cluster_name)
+```
+```{r}
+#Create training and test sets
+m_clean$set = "train"
+
+for(f in feed_type_list){
+  sub_df = m_clean[m_clean$cluster_name == f,]
+  sub_df$set[sample(1:dim(sub_df)[1], size = 0.3*dim(sub_df)[1], replace = F)] = "test"
+  m_clean[m_clean$cluster_name ==f,] = sub_df
+}
+
+m_train = m_clean[m_clean$set == "train",]
+m_test = m_clean[m_clean$set == "test",]
+
+modeling_df = data.frame()
+#Set max training set size to 10,000 by sampling from available data and replicating smaller data sets
+for(f in feed_type_list){
+  print(paste("Sampling",f))
+  sub_train = m_train[m_train$cluster_name == f,] #Get only current feed type records
+  to_replace = T
+  if(dim(sub_train)[1]>=10000){ #If the feed type has more than 10,000 records, don't use replacement in sampling
+    to_replace = F
+  }
+  sub_train = sub_train[sample(1:dim(sub_train)[1], size = 10000, replace = T),] #sample with replacement to create 10000 records per feed type
+ if(dim(modeling_df)[1] == 0){#If modeling_df is empty, running this chunk 1x results in an empty data frame, so running it twice, without understanding the root problem
+   modeling_df = merge(modeling_df, sub_train, all = T)
+ }
+  modeling_df = merge(modeling_df, sub_train, all = T) #merge into modeling_df
+}
+
+table(modeling_df$cluster_name) #to this point all feed types have same number of samples
+```
+
+```{r}
+#Create the svm models
+PCA_nutrients = read_csv("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_2_data/PCA_feed_nutrients_chosen.csv") #Holds records of the max number of nutrients usable for each feed type
+svm_confusion_detail_list = list()
+svm_model_list = list()
+svm_best_parameters = data.frame("feed_type" = feed_type_list, "cost" = rep(NA,length(feed_type_list)), "gamma" = rep(NA, length(feed_type_list)))
+svm_best_error_rate = list()
+model_predictors = list()
+
+#Loop through each feed type, creating a randomForest model, storing the model and relevant statistics
+for(f in feed_type_list){
+  temp_set = modeling_df[!is.na(modeling_df$cluster_name),]
+  
+  #Set max training set size to n_svm because svm training is infeasible with a high number of samples
+  n_svm = 8000
+  #get 50% of n_svm filled by the feed type in question
+  this_feed = temp_set[temp_set$cluster_name == f,]
+  this_replace = F
+  #if this feed has less than 1/2 n_svm, use with replacement
+  if(dim(this_feed)[1]<(n_svm/2)){
+    this_replace = T
+  }
+  this_feed = this_feed[sample(1:dim(this_feed)[1], size = n_svm/2,replace = this_replace),]
+  
+  those_feeds = this_feed[1,]
+  for(ft in feed_type_list){#get the other feeds
+    #get samples of the current feed type
+    that_feed = temp_set[temp_set$cluster_name == ft,]
+    #the number of samples needed is n_svm/2/the number of other feeds
+    #if that feed has less than the desired number of samples, use replacement
+    that_replace = F
+    if(dim(that_feed)[1]<(n_svm/2/length(feed_type_list))){
+      that_replace = T
+    }
+    that_feed = that_feed[sample(1:dim(that_feed)[1], size = (n_svm/2/length(feed_type_list)), replace = that_replace),]
+    those_feeds = rbind(those_feeds,that_feed)
+  }
+  temp_set = rbind(this_feed[-1,], those_feeds)
+  
+  print(paste("Modeling",f,which(feed_type_list == f),"of",length(feed_type_list), sep = " "))
+  #Setting non-designated feed type samples as "other"
+  temp_set$temp_cluster =f
+  temp_set$temp_cluster[!temp_set$cluster_name == f] = "Other"
+  
+  #Find predictor nutrient set for feed type
+  feed_nutrients = PCA_nutrients$nutrients[PCA_nutrients$Feed_type %in% f]
+  feed_nutrients = unlist(strsplit(feed_nutrients, split = ","))
+  
+  #PCA_nutrients
+  feed_type_means = apply(temp_set[as.character(temp_set$cluster_name) == f,feed_nutrients], MARGIN = 2, FUN = function(x) mean(x,na.rm=T))
+  feed_type_sds = apply(temp_set[as.character(temp_set$cluster_name) == f,feed_nutrients], MARGIN = 2, FUN = function(x) sd(x,na.rm=T))
+  feed_nutrients = feed_nutrients[feed_nutrients %in% names(feed_type_means[!is.na(feed_type_means)])] #filter feed_nutrients for those with non-na values
+
+  #Impute missing values for Other feeds as mean of feed type
+  for(n in feed_nutrients){#For each nutrient, impute missing values
+    #temp_set[[n]][(!temp_set$temp_cluster == f) & is.na(temp_set[[n]])] = feed_type_means[n]  #Use this when imputing mean values
+    temp_set[[n]][(!temp_set$temp_cluster == f) & is.na(temp_set[[n]])] = rnorm(n = length(temp_set[[n]][(!temp_set$cluster_name ==f) & is.na(temp_set[[n]])]), mean = feed_type_means[n], sd = feed_type_sds[n])  #Use this for imputing random values with a mean and sd of the model feed type. When tested, increases oob error rates a little, but probably makes more realistic models
+    }
+  
+  model_predictors[[f]] = feed_nutrients
+  temp_set$temp_cluster = factor(temp_set$temp_cluster,levels = c(f,"Other"))
+  
+  svm_control = tune.control(cross = 5, performances = F, best.model =T)
+  svm_tune.out = tune(svm, train.x = as.matrix(temp_set[,feed_nutrients]), train.y = temp_set$temp_cluster, type = "C-classification", kernel = "radial", probability = T, list(cost = c(0.01, 1, 5, 10), gamma = c(1, 2, 3)), tunecontrol = svm_control)
+  
+  svm_best_model = svm_tune.out$best.model
+  svm_model_list[[f]] = svm_best_model
+  svm_best_parameters$cost[svm_best_parameters$feed_type == f] = svm_tune.out$best.model$cost
+  svm_best_parameters$gamma[svm_best_parameters$feed_type == f] = svm_tune.out$best.model$gamma
+  svm_best_error_rate[[f]] = svm_tune.out$best.performance
+}
+```
+```{r}
+#pull cost and gamma from each model
+svm_param_df = data.frame("feed_type" = feed_type_list, cost = rep(NA, length(feed_type_list)), gamma = rep(NA, length(feed_type_list)))
+
+for(f in feed_type_list){
+  svm_param_df$cost[svm_param_df$feed_type == f] = svm_model_list[[f]]$cost
+  svm_param_df$gamma[svm_param_df$feed_type ==f] = svm_model_list[[f]]$gamma
+}
+```
+
+
+```{r}
+#Containers for models and model statistics
+rForest_confusion_detail_list = list()
+rForest_model_list = list()
+rForest_best_error_rate = list()
+model_predictors = list()
+
+PCA_nutrients = read_csv("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_2_data/PCA_feed_nutrients_chosen.csv") #Holds records of the max number of nutrients usable for each feed type
+
+#Loop through each feed type, creating a randomForest model, storing the model and relevant statistics
+for(f in feed_type_list){
+  temp_set = modeling_df
+  print(paste("Modeling",f,which(feed_type_list == f),"of",length(feed_type_list), sep = " "))
+  #Setting non-designated feed type samples as "other"
+  temp_set$temp_cluster =f
+  temp_set$temp_cluster[!temp_set$cluster_name == f] = "Other"
+  
+  #Give training set 50% of samples in the feed type and 50% other feed types, otherwise the models minimize error rate by classifying good samples as bad
+  this_feed = temp_set[temp_set$temp_cluster == f,]
+  those_feeds = temp_set[!temp_set$cluster_name == f,]
+  those_feeds = those_feeds[sample(1:dim(those_feeds)[1], size = dim(this_feed)[1], replace = F),]
+  temp_set = merge(this_feed, those_feeds, all = T)
+  
+  #Find predictor nutrient set for feed type
+  feed_nutrients = PCA_nutrients$nutrients[PCA_nutrients$Feed_type %in% f]
+  feed_nutrients = unlist(strsplit(feed_nutrients, split = ","))
+  
+  #PCA_nutrients
+  feed_type_means = apply(temp_set[as.character(temp_set$cluster_name) == f,feed_nutrients], MARGIN = 2, FUN = function(x) mean(x,na.rm=T))
+  feed_type_sds = apply(temp_set[as.character(temp_set$cluster_name) == f,feed_nutrients], MARGIN = 2, FUN = function(x) sd(x,na.rm=T))
+
+  feed_nutrients = feed_nutrients[feed_nutrients %in% names(feed_type_means[!is.na(feed_type_means)])] #filter feed_nutrients for those with non-na values
+
+  #Impute missing values for Other feeds as mean of feed type
+  for(n in feed_nutrients){#For each nutrient, impute missing values
+    #temp_set[[n]][(!temp_set$temp_cluster == f) & is.na(temp_set[[n]])] = feed_type_means[n]  #Use this when imputing mean values
+    temp_set[[n]][(!temp_set$temp_cluster == f) & is.na(temp_set[[n]])] = rnorm(n = length(temp_set[[n]][(!temp_set$cluster_name ==f) & is.na(temp_set[[n]])]), mean = feed_type_means[n], sd = feed_type_sds[n])  #Use this for imputing random values with a mean and sd of the model feed type. When tested, increases oob error rates a little, but probably makes more realistic models
+    }
+  
+  feed_formula = as.formula(paste("temp_cluster",paste(feed_nutrients, collapse = "+"), sep = "~")) #create the model formula for this feed
+  model_predictors[[f]] = feed_nutrients
+  
+  temp_set$temp_cluster = factor(temp_set$temp_cluster,levels = c(f,"Other"))
+  #Create random forest
+  print("Making the random forest model")
+  #rforest = randomForest(feed_formula, data = temp_set)
+  
+  #change this to a tuned random forest
+  tune_rf.out = tuneRF(x = as.matrix(temp_set[,feed_nutrients]),y = temp_set$temp_cluster, improve = 0.025,trace = T,plot = F,doBest = T, stepFactor = 1)
+  
+  tune_rf_confusion = tune_rf.out$confusion
+  rForest_model_list[[f]] = tune_rf.out
+  rForest_best_error_rate[[f]] = mean(tune_rf_confusion[,3])
+}
+```
+
+
+```{r}
+#Predict the test_set data
+test_set_predictions = list() #holds prediction data for each feed model
+classification_performance = data.frame("feed_type_model" = c(feed_type_list,feed_type_list),
+                                        "model_type" = c(rep("RF", length(feed_type_list)), rep("SVM", length(feed_type_list))),
+                                        "this_error_rate" = rep(NA, length(feed_type_list)*2),
+                                        "other_error_rate" = rep(NA, length(feed_type_list)*2), 
+                                        "sensitivity" = rep(NA, length(feed_type_list)*2),
+                                        "specificity" = rep(NA, length(feed_type_list)*2)) #holds classification error rates for each model
+test_set_confusion_matrices = list() #holds the confusion matrix for each feed model
+
+for(f in feed_type_list){
+  print(paste("Making",f,"model predictions", sep = " "))
+  temp_test = m_test
+  this_rforest_model = rForest_model_list[[f]]
+  this_svm_model = svm_model_list[[f]]
+  
+  #declare this and other feed types
+  temp_test$temp_cluster = f
+  temp_test$temp_cluster[!temp_test$cluster_name == f] = "Other"
+  
+  #Find predictor nutrient set for feed type
+  predictor_nutrients = model_predictors[[f]]
+  
+  #Impute missing predictor nutrients
+  feed_type_means = apply(temp_test[as.character(temp_test$cluster_name) == f,predictor_nutrients], MARGIN = 2, FUN = function(x) mean(x, na.rm=T))
+  feed_type_sds = apply(temp_test[as.character(temp_test$cluster_name) == f,predictor_nutrients], MARGIN = 2, FUN = function(x) sd(x,na.rm=T))
+
+  #Impute missing values for Other feeds as mean of feed type
+  for(n in predictor_nutrients){#For each nutrient, impute missing values
+    #temp_test[[n]][(!temp_test$cluster_name == f) & is.na(temp_test[[n]])] = rep(feed_type_means[n], length( temp_test[[n]][(!temp_test$cluster_name == f) & is.na(temp_test[[n]])])) #Use this when imputing mean values
+    temp_test[[n]][(!temp_test$temp_cluster == f) & is.na(temp_test[[n]])] = rnorm(n = length(temp_test[[n]][(!temp_test$cluster_name ==f) & is.na(temp_test[[n]])]), mean = feed_type_means[n], sd = feed_type_sds[n])  #Can use this for imputing random values with a mean and sd of the model feed type. When tested, it didn't make any difference in classification error rates
+  }
+  
+  #Make predictions of classes and probabilities
+  predicted_rforest_prob = predict(this_rforest_model, newdata = temp_test[,predictor_nutrients], type = "prob")
+  predicted_rforest_class = predict(this_rforest_model, newdata = temp_test[,predictor_nutrients], type = "response")
+  predicted_svm_prob = attr(predict(this_svm_model, newdata = as.matrix(temp_test[,predictor_nutrients]), probability = T), "probabilities")
+  predicted_svm_class = predict(this_svm_model, newdata = as.matrix(temp_test[,predictor_nutrients]))
+  
+  #Create a list of data frames, one for each feed type model, storing the reference values, predicted values, and predicted probabilities
+  this_prediction_df = data.frame("test_feed_type" = temp_test$cluster_name, 
+                                  "test_class" = temp_test$temp_cluster, 
+                                  "rf_predicted_class" = predicted_rforest_class,
+                                  "rf_predicted_prob_yes" = predicted_rforest_prob[,1],
+                                  "rf_predicted_prob_no" = predicted_rforest_prob[,2],
+                                  "svm_predicted_class" = predicted_svm_class,
+                                  "svm_predicted_prob_yes" = predicted_svm_prob[,1],
+                                  "svm_predicted_prob_no" = predicted_svm_prob[,2])
+  test_set_predictions[[f]] = this_prediction_df
+  
+  #Get and store the random forest data
+  rf_confusion = table(temp_test$temp_cluster, this_prediction_df$rf_predicted_class)
+  this_error_rate = rf_confusion[row.names(rf_confusion) == f,!colnames(rf_confusion) == f]/sum(rf_confusion[row.names(rf_confusion) == f,c(1,2)]) #the error rate for this feed type on this model
+  this_sensitivity = rf_confusion[row.names(rf_confusion) == f, colnames(rf_confusion) == f]/sum(rf_confusion[row.names(rf_confusion) == f,c(1,2)]) #predicted positive / truly positive
+  this_specificity = rf_confusion[!row.names(rf_confusion) == f, colnames(rf_confusion) == "Other"]/sum(rf_confusion[row.names(rf_confusion) == "Other",c(1,2)]) #predicted negative / truly negative
+  classification_performance$this_error_rate[classification_performance$feed_type_model == f & classification_performance$model_type == "RF"] = this_error_rate #stores the error rate for this feed on this model
+  classification_performance$sensitivity[classification_performance$feed_type_model == f & classification_performance$model_type == "RF"] = this_sensitivity
+  classification_performance$specificity[classification_performance$feed_type_model == f & classification_performance$model_type == "RF"] = this_specificity
+  
+  rf_confusion = table(temp_test$cluster_name, this_prediction_df$rf_predicted_class) #change the confusion matrix to include all feed types
+  rf_confusion = cbind(rf_confusion,round(rf_confusion[,1]/apply(rf_confusion[,c(1,2)], MARGIN = 1, sum),2)) #classification error rate
+  rf_confusion = cbind(rf_confusion, round(rf_confusion[,colnames(rf_confusion) == "Other"]/apply(rf_confusion[,c(1,2)], MARGIN = 1, sum),2)) #predicted negative / truly negative
+  rf_confusion[row.names(rf_confusion) == f,4] = NA #removing the record for this feed type
+  
+  colnames(rf_confusion) = c(f,"Other","error_rate","specificity")
+
+  rf_other_confusion = rf_confusion[!row.names(rf_confusion) == f,]
+  this_rf_confusion = rf_confusion[row.names(rf_confusion) == f,]
+  this_rf_confusion[3] = this_error_rate
+  rf_confusion = rbind(this_rf_confusion,rf_other_confusion)
+  rf_confusion_names = c(f,row.names(rf_other_confusion))
+  rownames(rf_confusion) = rf_confusion_names
+  test_set_confusion_matrices[[f]][["RF"]] = rf_confusion #stores the test set confusion matrix with error rates
+  classification_performance$other_error_rate[classification_performance$feed_type_model == f & classification_performance$model_type == "RF"] = mean(rf_other_confusion[,3]) #stores the mean error rate for other feeds
+  
+  #Get and store the svm data
+  svm_confusion = table(temp_test$temp_cluster, this_prediction_df$svm_predicted_class)
+  this_error_rate = svm_confusion[row.names(svm_confusion) == f,!colnames(svm_confusion) == f]/sum(svm_confusion[row.names(svm_confusion) == f,c(1,2)]) #the error rate for this feed type on this model
+  this_sensitivity = svm_confusion[row.names(svm_confusion) == f, colnames(svm_confusion) == f]/sum(svm_confusion[row.names(svm_confusion) == f,c(1,2)]) #predicted positive / truly positive
+  this_specificity = svm_confusion[!row.names(svm_confusion) == f, colnames(svm_confusion) == "Other"]/sum(svm_confusion[row.names(svm_confusion) == "Other",c(1,2)]) #predicted negative / truly negative
+  classification_performance$this_error_rate[classification_performance$feed_type_model == f & classification_performance$model_type == "SVM"] = this_error_rate
+  classification_performance$sensitivity[classification_performance$feed_type_model == f & classification_performance$model_type == "SVM"] = this_sensitivity
+  classification_performance$specificity[classification_performance$feed_type_model == f & classification_performance$model_type == "SVM"] = this_specificity
+  
+  svm_confusion = table(temp_test$cluster_name, this_prediction_df$svm_predicted_class) #Change the confusion matrix to include all feed types
+  svm_confusion = cbind(svm_confusion, round(svm_confusion[,1]/apply(svm_confusion[,c(1,2)], MARGIN = 1, sum),2))
+  svm_confusion = cbind(svm_confusion, round(svm_confusion[,colnames(svm_confusion) == "Other"]/apply(svm_confusion[,c(1,2)], MARGIN = 1, sum),2)) #predicted negative / truly negative
+  svm_confusion[row.names(svm_confusion) == f,4] = NA #removing the record for this feed type
+  
+  svm_other_confusion = svm_confusion[!row.names(svm_confusion) == f,]
+  this_svm_confusion = svm_confusion[row.names(svm_confusion) == f,]
+  this_svm_confusion[3] = this_error_rate
+  svm_confusion = rbind(this_svm_confusion, svm_other_confusion)
+  svm_confusion_names = c(f, row.names(svm_other_confusion))
+  rownames(svm_confusion) = svm_confusion_names
+  test_set_confusion_matrices[[f]][["SVM"]] = svm_confusion #stores the test set confusion matrix with error rates
+  classification_performance$other_error_rate[classification_performance$feed_type_model == f & classification_performance$model_type == "SVM"] = mean(svm_other_confusion[,3])
+}
+```
+
+```{r}
+#Plot specificity and sensitivity
+colnames(classification_performance) = c("feed_type_model","model_type","this_error_rate","other_error_rate","Sensitivity","Specificity")
+
+classification_performance$model_type = as.character(classification_performance$model_type)
+classification_performance$model_type[classification_performance$model_type == "RF"] = "Random forest"
+classification_performance$model_type[classification_performance$model_type == "SVM"] = "Support vector machine"
+
+classification_performance_long = melt(classification_performance[,c("feed_type_model","model_type","Specificity","Sensitivity")], id.vars = c("feed_type_model","model_type"))
+
+ggplot(classification_performance_long, aes(x = value, fill = model_type))+
+  geom_histogram(position = "identity", alpha = 0.6)+
+  facet_wrap(.~variable, ncol = 1)+
+  theme_minimal(base_size = 16)+
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1))+
+  scale_fill_manual(values = c("blue","red"))+
+  labs(fill = "", x = "", y = "Number of models")+
+  theme(panel.grid = element_blank(), legend.position = "bottom")
+
+ggsave("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/test_set_performance.jpeg")
+```
+```{r}
+#Look at low sensitivity models
+classification_performance[order(classification_performance$Sensitivity),]
+```
+
+```{r}
+#Summarize SVM models
+summary(classification_performance[classification_performance$model_type == "Support vector machine",])
+```
+
+```{r}
+#plot model sensitivity vs number of truly unique samples
+training_frequency = data.frame(table(m_train$cluster_name))
+head(training_frequency)
+training_frequency$Var1 = as.character(training_frequency$Var1)
+colnames(training_frequency) = c("feed_type_model","unique_training_samples")
+
+classification_performance$feed_type_model = as.character(classification_performance$feed_type_model)
+         
+size_v_sens = merge(x = classification_performance[,c("feed_type_model","Sensitivity","model_type")], y = training_frequency)
+
+ggplot(size_v_sens, aes(x = unique_training_samples, y = Sensitivity, color = model_type))+
+  geom_point()+
+  facet_wrap(.~model_type, ncol = 2)+
+  theme_minimal(base_size = 16)+
+  theme(panel.grid.minor = element_blank(), legend.position = "none")+
+  labs(x = "Unique samples in the training set", y = "Test set sensitivity")+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), breaks = c(0,0.5,0.75,0.95,1))+
+  scale_x_continuous(labels = scales::comma_format(), breaks = c(100,50000,100000))+
+  scale_color_manual(values = c("blue","red"))
+
+ggsave("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/sens_v_size.jpeg")
+```
+```{r}
+#look at models with <50% Sensitivity
+classification_performance[classification_performance$Sensitivity<0.6,]
+```
+```{r}
+#What was the worst SVM model?
+classification_performance[order(classification_performance$Sensitivity, decreasing = F),]
+```

@@ -1,0 +1,166 @@
+---
+title: "Summary of the statistical filters"
+author: "Kyle Taysom"
+date: "12/6/2020"
+output: html_document
+---
+
+```{r}
+require(readr)
+require(ggplot2)
+require(reshape2)
+
+```
+
+```{r}
+#Load the data from outlier filtering round 1
+
+go_1 = read_csv("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/gross_outlier_summary.csv")
+go_2 = read_csv("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_2_data/gross_outlier_summary.csv")
+go_1
+```
+The number of original samples
+```{r}
+go_1$count = go_1$Not_outliers+go_1$Outlier_count
+sum(go_1$count)
+
+go_2$count = go_2$Not_outliers+go_2$Outlier_count
+sum(go_2$count)
+
+data.frame("round_1" = sum(go_1$count), "round_2" = sum(go_2$count))
+```
+The number of original feed types
+```{r}
+data.frame("round_1" = length(unique(go_1$product)), "round_2" = length(unique(go_2$cluster)))
+
+```
+Summary of gross outliers removed
+```{r}
+
+print(summary(go_1$pct_outliers))
+print(summary(go_2$pct_outliers))
+
+```
+The total % of gross outliers removed by each round
+```{r}
+data.frame("Round 1" = sum(go_1$Outlier_count)/sum(go_1$Not_outliers+go_1$Outlier_count), 
+           "Round 2" = sum(go_2$Outlier_count)/sum(go_1$Not_outliers+go_1$Outlier_count))
+
+```
+Summarize the number of nutrients selected
+- PCA nutrients were the maximum number of nutrients that could be included and still meet the minimum threshold of 30% of the samples or at least 30 samples retained
+- which feed type had the most and what were they
+- which feed type had the least and what were they
+- what was the mean number of nutrients per feed type
+- can we say something about the types of feeds that had many vs few (forages vs non) (nir vs chemistry)?
+```{r}
+nutrients_chosen_1 = read_csv("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/PCA_feed_nutrients_chosen.csv")
+nutrients_chosen_2 = read_csv("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_2_data/PCA_feed_nutrients_chosen.csv")
+
+
+nutrients_chosen_1$count = sapply(nutrients_chosen_1$nutrients, FUN = function(x) length(unlist(strsplit(x, split = ","))))
+nutrients_chosen_2$count = sapply(nutrients_chosen_2$nutrients, FUN = function(x) length(unlist(strsplit(x, split = ","))))
+
+nutrients_chosen_1 = nutrients_chosen_1[order(nutrients_chosen_1$count, decreasing = T),]
+nutrients_chosen_2 = nutrients_chosen_2[order(nutrients_chosen_2$count, decreasing = T),]
+
+
+print(paste("The feed with the most nutrients was", nutrients_chosen_1$Feed_type[1], "with", nutrients_chosen_1$count[1], "nutrients, including ",nutrients_chosen_1$nutrients[1], sep = " "))
+
+last_feed_num = dim(nutrients_chosen_1)[1]-1
+print(paste("The feed with the least nutrients was", nutrients_chosen_1$Feed_type[last_feed_num], "with", nutrients_chosen_1$count[last_feed_num], "nutrients, including ",nutrients_chosen_1$nutrients[last_feed_num], sep = " "))
+
+print(paste("The mean number of nutrients included was ", mean(nutrients_chosen_1$count)))
+
+#for round 2
+print(paste("The feed with the most nutrients was", nutrients_chosen_2$Feed_type[1], "with", nutrients_chosen_2$count[1], "nutrients, including ",nutrients_chosen_1$nutrients[2], sep = " "))
+
+last_feed_num = dim(nutrients_chosen_2)[1]-1
+print(paste("The feed with the least nutrients was", nutrients_chosen_2$Feed_type[last_feed_num], "with", nutrients_chosen_2$count[last_feed_num], "nutrients, including ",nutrients_chosen_2$nutrients[last_feed_num], sep = " "))
+
+print(paste("The mean number of nutrients included was ", mean(nutrients_chosen_1$count)))
+```
+
+
+
+Summarize the number of samples removed by PCA outlier in rounds 1 and 2
+- Feed types were dropped when they didn't have at least 100 samples with complete cases for at least 3 nutrients
+- How many feed types were dropped because they didn't have enough samples with enough nutrients?
+```{r}
+PCA_out_1 = read_csv("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/PCA_outlier_summary.csv")
+dropped_feeds_1 = unlist(PCA_out_1$product[PCA_out_1$not_PCA_outlier == 0])
+
+PCA_out_2 = read_csv("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_2_data/PCA_outlier_summary.csv")
+dropped_feeds_2 = PCA_out_2$cluster[PCA_out_2$not_PCA_outlier == 0]
+
+print(paste("Round 1 dropped",dropped_feeds_1, "for insuffiennt number of samples with complete cases", sep = " "))
+print(paste("Round 2 dropped", dropped_feeds_2, "for insufficient number of samples with complete cases", sep = " "))
+
+sum(table(round_1_all_outlier_data$product[round_1_all_outlier_data$product %in% dropped_feeds_1]))/dim(round_1_all_outlier_data[!round_1_all_outlier_data$is_a_nutrient_outlier,])[1]
+```
+```{r}
+#Summarize the number of samples removed because they were not complete cases for PCA nutrients
+
+round_1_all_outlier_data = read_csv("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/m_after_outlier_detection.csv")
+round_2_all_outlier_data = read_csv("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_2_data/m_after_outlier_detection.csv")
+
+
+#Of the samples that were not in feed types that were dropped
+  #and were not nutrient outlieis_a_nutrient_outlier
+  #how many were not complete cases
+
+round_1_PCA_qualifying = table(round_1_all_outlier_data$is_a_complete_PCA_case[!(round_1_all_outlier_data$product %in% dropped_feeds_1) & !round_1_all_outlier_data$is_a_nutrient_outlier])
+
+print(paste("Round 1 removed",round(round_1_PCA_qualifying[1]/sum(round_1_PCA_qualifying)*100,2),"because they did not have complete sets of the selected nutrients", sep = " "))
+
+print(paste("In round 1",round_1_PCA_qualifying[1],"samples were dropped because they were not complete cases for the nutrients selected for PCA analysis", sep = " "))
+
+round_2_PCA_qualifying = table(round_2_all_outlier_data$is_a_complete_PCA_case[!(round_2_all_outlier_data$cluter %in% dropped_feeds_1) & !round_2_all_outlier_data$is_a_nutrient_outlier])
+
+print("No futher samples were dropped for being incomplete cases in Round 2")
+```
+What percent of samples were removed by the PCA outlier step
+```{r}
+print(summary(PCA_out_1$percent_PCA_outliers))
+print(summary(PCA_out_2$percent_PCA_outliers))
+
+```
+The percent of samples removed as PCA outliers in each round
+```{r}
+data.frame("Round 1" = sum(PCA_out_1$is_PCA_outlier)/sum(PCA_out_1$not_PCA_outlier+PCA_out_1$is_PCA_outlier),
+           "Round 2" = sum(PCA_out_2$is_PCA_outlier)/sum(PCA_out_2$not_PCA_outlier+PCA_out_2$is_PCA_outlier))
+
+```
+Describe the number of clusters added/removed by the clustering steps
+```{r}
+#Round 1
+  #Created wet/dry CGF, beet pulp, and corn distillers grains
+  #Created solvent/extruded SBM and canola meal
+  #Removed outlier clusters from hominy, soybean hulls, roasted soybeans, corn stalks, and brewers grains
+
+#Round 2
+  #No new clusters were created or removed
+
+
+#Find the number of samples after PCA outlier analysis
+pre_cluster_all = dim(round_1_all_outlier_data[!round_1_all_outlier_data$is_a_nutrient_outlier &  #the total number of samples pre-clustering
+                           !round_1_all_outlier_data$is_PCA_outlier,])[1]
+
+pre_cluster_set = dim(round_1_all_outlier_data[round_1_all_outlier_data$product %in% c("Hominy","Soybean_hulls","Corn_stalks","Brewers_grain") &
+                                                 !round_1_all_outlier_data$is_a_nutrient_outlier &  #the number of samples in feed types that had clusters removed
+                                                 !round_1_all_outlier_data$is_PCA_outlier,])[1]
+
+
+#Find the number of samples, in each feed type that had clusters removed, after cluster analysis
+hominy = read_csv("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/Hominy.csv")
+soybean_hulls = read_csv("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/Soybean_hulls.csv")
+corn_stalks = read_csv("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/Corn_stalks.csv")
+brewers_grain = read_csv("C:/Users/Kyle/OneDrive - Dairyland Laboratories, Inc/School/Final project/round_1_data/post_clustering_data/Brewers_grain.csv")
+
+post_cluster_count = dim(hominy)[1]+dim(soybean_hulls)[1]+dim(corn_stalks)[1]+dim(brewers_grain)[1] #the number of samples in feed types that had clusters removed - after clustering
+
+removed_cluster_samples = pre_cluster_set - post_cluster_count
+
+print(paste(removed_cluster_samples/pre_cluster_all, " of samples were removed during cluster analysis"))
+```
+
